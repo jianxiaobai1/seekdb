@@ -25,6 +25,20 @@ int   seekdb_cuvs_search(void* handle, const float* query, long nq, long topk,
 void  seekdb_cuvs_free(void* handle);
 int seekdb_cuvs_serialize(void* handle, const char* filename);
 void* seekdb_cuvs_deserialize(const char* filename, long n, long dim);
+
+/* Snapshot helpers. The CAGRA graph is the only part of the index that cannot be
+ * rebuilt from the stored vectors, so seekdb persists it alone and reconstructs
+ * the index on load with cuvsCagraIndexFromArgs (no NN-descent, no graph prune).
+ *  - seekdb_cuvs_export_graph: copies the built graph (n x degree, uint32) to a
+ *    freshly malloc'd host buffer owned by the caller.
+ *  - seekdb_cuvs_import: builds a searchable index from host-resident dataset and
+ *    graph; returns NULL on error.
+ *  - seekdb_cuvs_free_host: releases a buffer returned by export. */
+int  seekdb_cuvs_export_graph(void* handle, unsigned int** out_graph,
+                              long* out_n, long* out_degree);
+void* seekdb_cuvs_import(const float* base, long n, long dim,
+                         const unsigned int* graph, long degree);
+void seekdb_cuvs_free_host(void* ptr);
 #ifdef __cplusplus
 }
 #endif

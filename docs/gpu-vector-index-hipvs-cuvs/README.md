@@ -47,6 +47,11 @@ seekdb_cuvs_build
 seekdb_cuvs_search
 seekdb_cuvs_free
 seekdb_cuvs_cagra_knn
+seekdb_cuvs_serialize
+seekdb_cuvs_deserialize
+seekdb_cuvs_export_graph
+seekdb_cuvs_import
+seekdb_cuvs_free_host
 ```
 
 Build seekdb with the resulting library:
@@ -66,6 +71,44 @@ For a CPU-only build, leave the defaults or pass:
   -DOB_BUILD_CUVS=OFF \
   -DOB_BUILD_CUVS_TRACE=OFF \
   --make -j64
+```
+
+## Build-time tuning
+
+CAGRA build parameters are read from the environment every time an index is
+built, so a sweep needs no rebuild:
+
+| Variable | Default | Meaning |
+| --- | ---: | --- |
+| `SEEKDB_CUVS_GRAPH_DEGREE` | 128 | persisted graph degree |
+| `SEEKDB_CUVS_INTERMEDIATE_DEGREE` | = graph degree | pre-prune NN-descent degree |
+| `SEEKDB_CUVS_NN_DESCENT_NITER` | 32 | NN-descent refinement rounds |
+| `SEEKDB_CUVS_BUILD_ALGO` | `nn_descent` | `nn_descent` or `auto` |
+
+Search parameters are read the same way and only affect serving (`itopk`
+defaults to `max(topk*4, 512)`):
+
+| Variable | Default | Meaning |
+| --- | ---: | --- |
+| `SEEKDB_CUVS_SEARCH_ITOPK` | `max(topk*4, 512)` | candidate list size |
+| `SEEKDB_CUVS_SEARCH_WIDTH` | 4 | graph search width per round |
+
+The persisted GPU snapshot (`OBCUVS03`) stores ids, raw vectors and the CAGRA
+graph only; loading rebuilds the index with `cuvsCagraIndexFromArgs` instead of
+round-tripping a cuVS-serialized file through a temporary file, which removes a
+second copy of the dataset from both the write and the read path. The
+`serialized GPU CAGRA snapshot` / `deserialized GPU CAGRA snapshot` log lines
+report `build_us`, `degree` and `graph_bytes` for each run.
+
+## Performance
+
+[`PERF_REPORT.md`](PERF_REPORT.md) holds the CPU (`lib=vsag`) versus GPU CAGRA
+build comparison: methodology, the build-parameter sweep, and the measured build
+window against recall and QPS. The sweep needs no rebuild:
+
+```bash
+bash docs/gpu-vector-index-hipvs-cuvs/validation/hipvs_setup.sh bench
+bash docs/gpu-vector-index-hipvs-cuvs/validation/hipvs_setup.sh report
 ```
 
 ## SQL usage
@@ -129,8 +172,9 @@ The no-GPU DDL contract remains covered by
 ## Current limitations
 
 - Phase 1 supports dense float32 L2 indexes only.
-- GPU indexes are process-local and rebuilt lazily; persistence and cache reuse
-  are follow-up work.
+- GPU indexes are process-local. The `OBCUVS03` snapshot lets a restart re-import
+  the graph with `cuvsCagraIndexFromArgs` instead of rebuilding it, but two
+  processes still hold two copies in VRAM.
 - The explicit batch API rebuilds its CAGRA index per call.
 - GPU validation is manual because upstream CI has no compatible GPU runner.
 - Multi-GPU, long-duration, and snapshot-reload coverage are out of scope for
