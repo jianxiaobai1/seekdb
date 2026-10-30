@@ -28,6 +28,11 @@
 3. **bridge 侧 scratch buffer 复用**：每次 build/search 不再逐次 `cuvsRMMAlloc/Free`，
    改为按容量增长的长驻缓冲，消除分配抖动。
 
+参数选点不是拍脑袋的：用只调 cuVS 的探针在比 SIFT 更难的均匀随机数据上扫过一轮，
+默认值（`inter=128, niter=32`）是 recall 门限（同轮基线 ±0.005）内唯一还站得住的点——
+它把 cuVS 构建从 46.4s 压到 13.1s（3.5x），recall 只差 0.003；`niter` 再往下或把度数降到 96
+都会掉 0.007–0.016，IVF-PQ 建图更是掉 0.036（第 5.1 节）。
+
 在 Radeon Cloud（`gfx1100` / W7900，ROCm 7.2.4）上实测，250,000 × 128 维、200 条查询（第 5 节）：
 
 - **同一套冻结基线构建参数**（`inter=256, niter=100`）：构建窗口 **159.37s → 48.62s，3.28x**；
@@ -156,6 +161,18 @@ bash docs/gpu-vector-index-hipvs-cuvs/validation/hipvs_setup.sh report  # 渲染
 `.so` 链接失败（共享库允许未定义符号），只会在 dlopen 时才炸——门禁要前移到编译前。
 `bridge` 步骤末尾还会用 `RTLD_NOW` dlopen 一次 bridge，确认所有 cuVS 符号都能解析。
 
+第 5.1 节的参数边界不依赖 seekdb 构建，用 `validation/probe_cagra.c` 单独跑（只链接 hipVS 的 cuVS C API）：
+
+```bash
+hipcc -O3 -fopenmp -I/opt/hipvs/include \
+  docs/gpu-vector-index-hipvs-cuvs/validation/probe_cagra.c -o probe_cagra \
+  -L/opt/hipvs/lib -lcuvs_c -Wl,-rpath,/opt/hipvs/lib
+./probe_cagra --n 250000 --dim 128 --deg 128 --inter 128 --niter 32 --cluster 0 --nq 1000 --k 10
+```
+
+不加 `--cluster 0` 时生成 200 个簇的合成数据（很容易，recall 恒为 1.0，只适合看耗时）；
+`--cluster 0` 是均匀随机数据，用来卡 recall 边界。`--algo ivf --lists N --refine R` 走 IVF-PQ 建图。
+
 想直接对冻结基线做 A/B，把同一份 `bench_cagra_build.sh` 指向基线 checkout 编出来的 observer，
 用 `label=base634888d` 覆盖标签即可（基线不读 `SEEKDB_CUVS_*`，注入的环境变量被忽略，行为就是基线行为）：
 
@@ -200,6 +217,41 @@ bash docs/gpu-vector-index-hipvs-cuvs/validation/bench_cagra_build.sh \
 | `gpu_cuvs_deg128_inter192_niter32_nn_descent_itopk128_w2_restart` | 3.387s | 0 | 128000000 |
 | `gpu_cuvs_deg128_inter192_niter32_nn_descent_itopk64_w1_restart` | 3.367s | 0 | 128000000 |
 <!-- BENCH-TABLE:END -->
+
+### 5.1 构建参数的 recall 安全边界（cuVS 层独立复核）
+
+上面的表是在 seekdb 端到端路径上测的：构建窗口里含一段固定的 DDL 开销（约 5.6s，
+基线同样承担），它会把加速比压平，也回答不了"参数还能不能再往下压"这个问题。
+为此加了 `validation/probe_cagra.c`：自己生成数据、直接调 `cuvsCagraBuild` /
+`cuvsCagraSearch`，搜索参数与 bridge 完全一致（`itopk=max(topk*4,512)`、
+`search_width=4`），用精确暴力 top-k 复算 recall@10（1000 条查询，抽样噪声约 ±0.001）。
+
+数据是**均匀随机** 250,000 × 128：没有簇结构、近邻距离集中，比 SIFT 难得多。
+在这里守住的 recall 边界，在真实数据上只会更宽松。
+
+| 配置 | cuVS build (s) | recall@10 | 相对冻结基线参数 |
+|---|---|---|---|
+| deg=128 inter=256 niter=100（冻结基线参数） | 46.4 | 0.9923 | — |
+| **deg=128 inter=128 niter=32（当前默认）** | **13.1** | **0.9895** | **−0.0028** |
+| deg=128 inter=128 niter=24 | 11.4 | 0.9850 | −0.0073 |
+| deg=128 inter=128 niter=16 | 12.9 | 0.9813 | −0.0110 |
+| deg=96 inter=96 niter=32 | 12.6 | 0.9766 | −0.0157 |
+| deg=128 inter=128 IVF-PQ lists=1024 refine=1.0 | 6.2 | 0.9560 | −0.0363 |
+| deg=128 inter=256 IVF-PQ lists=4096 refine=1.0 | 6.4 | 0.9130 | −0.0793 |
+
+读法：
+
+1. 当前默认（`inter=128`、`niter=32`）在同一轮里把 cuVS 构建从 46.4s 压到 13.1s（**3.5x**），
+   而 recall 只掉 0.003，仍在评测门限（同轮基线 ±0.005）以内。这是唯一同时满足两个条件的点。
+2. `niter` 再往下走、或者把度数从 128 降到 96，都能再省 30–40% 构建时间，但 recall 掉
+   0.007–0.016，直接越界。换句话说，"再快一点"不能从图质量上找。
+3. IVF-PQ 建图（即使 `refinement_rate=1.0`，即用原始向量精化候选）能把构建压到 6.2s，
+   但 recall 只有 0.956：压过的近邻在这类难度下撑不起 CAGRA 的图。它只适合
+   大 N、允许更低 recall 的场景，不做本赛题默认。
+
+**关于噪声**：这是共享实例，同一配置、同一数据、同一进程参数下，构建耗时出现过
+46.4s 与 307.9s 两次结果（CPU 节流 / 邻居负载）。因此上表只用于**同轮比值**和 recall 判断，
+不拿绝对毫秒数当基准；recall 由同一进程内的精确 GT 复算，不受节流影响。
 
 ---
 
