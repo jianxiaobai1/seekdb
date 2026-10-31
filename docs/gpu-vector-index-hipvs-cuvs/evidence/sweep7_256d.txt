@@ -1,0 +1,23 @@
+# AMD Radeon Cloud (gfx1100 / Radeon PRO W7900, ROCm 7.2.4, hipVS /opt/hipvs)
+# cuVS-level CAGRA build+search sweep, 250000 x 256 dims, nq=100, topk=100, L2.
+# search params: itopk=512, search_width=4 (hipVS CAGRA caps itopk_size at 512).
+#
+# dataset c = 500-cluster synthetic (cluster centres + sigma=0.35 noise, L2-normalised)
+# dataset u = uniform random gaussian, L2-normalised
+#
+# tag       inter  niter  itopk  width  build_ms  search_ms  recall@100
+c_base       256   100   512     4      42573       34       1.0000
+c_i256n80    256    80   512     4      36100       35       1.0000
+c_i256n48    256    48   512     4      24304       35       1.0000
+c_i128n48    128    48   512     4      18673       34       0.9100   <-- recall breaks
+c_i256n48w   256    48  1024     8      26122       13       n/a       <-- itopk>512 rejected by hipVS
+c_i128n48w   128    48  1024     8      17496       14       n/a       <-- itopk>512 rejected by hipVS
+u_base       256   100   512     4      42039       40       0.9831
+u_i256n80    256    80   512     4      35276       41       0.9785   (-0.0046 vs base)
+u_i256n48    256    48   512     4      25817       39       0.9583   (-0.0248 vs base)
+u_i128n48    128    48   512     4      18400       40       0.9681   (-0.0150 vs base)
+u_i256n48w   256    48  1024     8      25220       13       n/a       <-- itopk>512 rejected by hipVS
+u_i128n48w   128    48  1024     8      19469       14       n/a       <-- itopk>512 rejected by hipVS
+#
+# hipVS error when itopk_size > 512:
+#   RAFT failure at .../cagra/search_single_cta.cuh line=139: itopk_size cannot be larger than 512

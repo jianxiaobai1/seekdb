@@ -1,0 +1,53 @@
+# recall matrix measured on the AMD instance (250k rows, 100 queries, topk=100, L2)
+# ground truth = exact brute-force top-100 computed with numpy
+# build knob naming: inter = intermediate_graph_degree, niter = nn_descent_niter
+#
+# ---- dataset A: 250k x 128, uniform random gaussian (seed 11) ----
+# config              build_ms  recall@10  recall@100
+base i256n100          41249      1.0000      0.9993
+i256n80                35932      0.9990      0.9990
+i256n32                21991      1.0000      0.9915
+i192n32                15016      0.9990      0.9912
+i128n100               31542      1.0000      0.9994
+i128n64                22147      1.0000      0.9983
+i128n48                17436      1.0000      0.9975
+i128n32                13910      0.9990      0.9930
+i128n24                10413      0.9970      0.9884
+deg128 niter20         14935      0.9980      0.9831
+deg96  niter20         11380      0.9930      0.9690
+deg64  niter20          8609      0.9880      0.9265
+deg64  niter40         14555      0.9980      0.9494
+#
+# ---- dataset B: 250k x 128, 500-cluster synthetic (seed 31) ----
+# config              build_ms  recall@10  recall@100
+i128n48                18372      0.8900      0.8900   <-- recall breaks
+i128n64                23572      0.8900      0.8900   <-- recall breaks
+i256n64                29925      1.0000      1.0000
+i256n80                34432      1.0000      1.0000
+#
+# ---- dataset C: 250k x 256, uniform random gaussian (seed 23) ----
+# config              build_ms  recall@10  recall@100
+base i256n100          40834      0.9990      0.9804
+i256n80                34886      0.9950      0.9759   (-0.0045 vs base)
+i256n64                30269      0.9920      0.9702   (-0.0102 vs base)
+i256n48                24525      0.9900      0.9594   (-0.0210 vs base)
+i128n100               32539      0.9970      0.9925
+i128n80                26571      0.9960      0.9905
+i128n48                18771      0.9890      0.9688
+i128n32                13206      0.9720      0.9434
+#
+# ---- dataset D: 250k x 256, 500-cluster synthetic (seed 23) ----
+# config              build_ms  recall@10  recall@100
+base i256n100          41326      1.0000      1.0000
+i256n80                35018      1.0000      1.0000
+i256n64                30689      1.0000      1.0000
+i256n48                24392      1.0000      1.0000
+i128n100               30896      0.8800      0.8800   <-- recall breaks
+i128n80                26258      0.9000      0.9000   <-- recall breaks
+i128n48                18113      0.9200      0.9200   <-- recall breaks
+i128n32                13715      0.9400      0.9400   <-- recall breaks
+#
+# conclusion: the 2x intermediate graph + prune step is what keeps the graph searchable.
+# Dropping it (inter == degree) costs 0.06-0.12 recall@100 on clustered data, which is
+# far outside the contest's +/-0.005 gate. Cutting nn_descent_niter is comparatively safe:
+# inter=256 with niter=80 keeps recall within the gate on every dataset measured.

@@ -14,17 +14,37 @@ int seekdb_cuvs_cagra_knn(const float* base, long n, long dim,
  *  - seekdb_cuvs_build: builds a CAGRA index on the GPU from base (n x dim,
  *    row-major f32) and returns an opaque handle (NULL on error). cuVS copies
  *    the dataset to the device, so `base` may be freed after this returns.
+ *  - seekdb_cuvs_build_tuned: same, but with the build knobs given explicitly
+ *    instead of taken from the environment. algo is 0 = nn_descent, 1 = auto,
+ *    2 = ivf_pq; degree/inter_degree/niter <= 0 mean "use the default".
  *  - seekdb_cuvs_search: runs top-k search for nq queries (row-major f32, dim
  *    cols), writing uint32 row offsets to out_ids[nq*topk] and (if non-NULL) L2
  *    distances to out_dist[nq*topk]. Returns 0 on success.
  *  - seekdb_cuvs_free: releases the handle.
  * All ROCm/cuVS state lives inside the .so; seekdb only ever sees these C symbols. */
 void* seekdb_cuvs_build(const float* base, long n, long dim);
+void* seekdb_cuvs_build_tuned(const float* base, long n, long dim,
+                              int algo, long degree, long inter_degree, long niter);
 int   seekdb_cuvs_search(void* handle, const float* query, long nq, long topk,
                          unsigned int* out_ids, float* out_dist);
 void  seekdb_cuvs_free(void* handle);
 int seekdb_cuvs_serialize(void* handle, const char* filename);
 void* seekdb_cuvs_deserialize(const char* filename, long n, long dim);
+
+/* Snapshot helpers. The adjacency list is the only part of a CAGRA index that
+ * cannot be re-derived from the stored vectors, so seekdb persists it alone and
+ * rebuilds the index on load with cuvsCagraIndexFromArgs (no NN-descent, no
+ * graph prune).
+ *  - seekdb_cuvs_export_graph: copies the built graph (n x degree, uint32) into a
+ *    freshly malloc'd host buffer owned by the caller.
+ *  - seekdb_cuvs_import: builds a searchable index from a host-resident dataset
+ *    and graph; returns NULL on error.
+ *  - seekdb_cuvs_free_host: releases a buffer returned by export. */
+int  seekdb_cuvs_export_graph(void* handle, unsigned int** out_graph,
+                              long* out_n, long* out_degree);
+void* seekdb_cuvs_import(const float* base, long n, long dim,
+                         const unsigned int* graph, long degree);
+void seekdb_cuvs_free_host(void* ptr);
 #ifdef __cplusplus
 }
 #endif
