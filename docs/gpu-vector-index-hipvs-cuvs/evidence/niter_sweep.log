@@ -1,0 +1,34 @@
+ROWS=250000
+RESULT n256i100 niter=100 dim=256 ddl_ms=48131 first_q_ms=67 window_ms=48198
+QPS n256i100 top100 = 52.6 q/s
+RECALL n256i100 recall@10=1.0000 recall@100=0.9795 queries=100
+QPS n256i100 top10 = 70.9 q/s
+ROWS=250000
+RESULT n256i64 niter=64 dim=256 ddl_ms=35843 first_q_ms=56 window_ms=35899
+QPS n256i64 top100 = 55.3 q/s
+RECALL n256i64 recall@10=0.9950 recall@100=0.9706 queries=100
+QPS n256i64 top10 = 69.3 q/s
+ROWS=250000
+RESULT d128i100 niter=100 dim=128 ddl_ms=45773 first_q_ms=58 window_ms=45832
+QPS d128i100 top100 = 62.7 q/s
+Traceback (most recent call last):
+  File "/workspace/recall_ab.py", line 8, in <module>
+    ex = load(sys.argv[1], 100)
+         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/recall_ab.py", line 3, in load
+    lines = [l.split() for l in open(p) if l.strip()]
+                                ^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/workspace/ab/exact.txt'
+QPS d128i100 top10 = 73.0 q/s
+ROWS=250000
+RESULT d128i64 niter=64 dim=128 ddl_ms=34311 first_q_ms=55 window_ms=34367
+QPS d128i64 top100 = 60.4 q/s
+Traceback (most recent call last):
+  File "/workspace/recall_ab.py", line 8, in <module>
+    ex = load(sys.argv[1], 100)
+         ^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/recall_ab.py", line 3, in load
+    lines = [l.split() for l in open(p) if l.strip()]
+                                ^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/workspace/ab/exact.txt'
+QPS d128i64 top10 = 74.6 q/s

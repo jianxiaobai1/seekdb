@@ -1,0 +1,1 @@
+n=250000 dim=256 nq=100 topk=100 build_ms=42471 search_ms=41 rc=0

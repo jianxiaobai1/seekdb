@@ -1,0 +1,19 @@
+### ARM A: frozen baseline binary (revision 634888d)
+ERROR 1231 (42000) at line 1: Variable 'max_allowed_packet' can't be set to the value of '2000000000'
+ROWS=250000
+RESULT ff_base ddl_ms=49765 first_q_ms=54 window_ms=49820
+QPS ff_base top100 = 55.1 q/s
+RECALL ff_base recall@10=0.9980 recall@100=0.9782 queries=100
+QPS ff_base top10 = 70.3 q/s
+awk: run time error: not enough arguments passed to printf("PEAK %s %s=%d ")
+	FILENAME="/workspace/ab256/ff_base.vram" FNR=1221 NR=1221
+PEAK card3 28028928=### ARM B: candidate binary (f310b91) + certified bridge, zero build knobs
+ERROR 1231 (42000) at line 1: Variable 'max_allowed_packet' can't be set to the value of '2000000000'
+ROWS=250000
+RESULT ff_cand ddl_ms=49306 first_q_ms=61 window_ms=49367
+QPS ff_cand top100 = 54.8 q/s
+RECALL ff_cand recall@10=0.9990 recall@100=0.9796 queries=100
+QPS ff_cand top10 = 72.4 q/s
+awk: run time error: not enough arguments passed to printf("PEAK %s %s=%d ")
+	FILENAME="/workspace/ab256/ff_cand.vram" FNR=1240 NR=1240
+PEAK card3 28028928=FF_AB_DONE

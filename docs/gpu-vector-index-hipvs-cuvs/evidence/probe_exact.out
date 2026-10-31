@@ -1,0 +1,1 @@
+n=250000 dim=256 lists=1 probes=1 cand=132 degree=128 upload_ms=45 train_ms=139 selfsearch_ms=55046 d2h_ms=92 import_ms=95 total_ms=55419 10

@@ -1,0 +1,2 @@
+[seekdb_cuvs] all_neighbors fp16=0 n=250000 dim=256 degree=128 upload=123 build=20070 d2h=82 prune=77 import=19 total=20374 (ms)
+n=250000 dim=256 nq=100 topk=100 build_ms=20401 search_ms=25 rc=0

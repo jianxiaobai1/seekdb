@@ -1,0 +1,56 @@
+# Same-round repeats of the SHIPPED default at 250k x 256 (Hidden scale)
+#
+# Runner: evidence/ab_final_same_round.sh, executed N times back to back on the AMD instance
+# (bash /workspace/ff_repeat.sh). Each round starts a frozen-baseline observer (revision
+# 1-634888d9b037...) and a candidate observer (revision 1-f310b91bb60a... + the certified
+# bridge /workspace/out_final) in the SAME session, on the SAME 250k x 256 table, with the
+# SAME observer parameters and the SAME DDL, and NO SEEKDB_CUVS_* build knob set in the
+# candidate arm -- i.e. what we actually ship: nn_descent, intermediate = 2*degree = 256,
+# niter = 100.
+#
+# Rounds are numbered as they were archived (/workspace/ffarchive/roundN).
+# round2 is NOT in this table: its baseline observer never reached a usable port and the
+# runner aborted with "FAIL start ff_base" after the connect-retry loop. It is excluded, not
+# re-used, so no numbers below come from a half-run.
+#
+# Table = offline replay of each round's log + .marks/.vram, produced by
+#   python3 evidence/scripts/ff_round_report.py /workspace/ffarchive ff_base ff_cand
+# (same window-cut logic as the python block in evidence/final_ship.sh):
+#
+#   win ratio  = baseline window_ms / candidate window_ms   (>1 means we are faster)
+#   qps_geo    = geometric mean of (cand/baseline) over top-10 and top-100 QPS
+#   peak       = max VRAM used on our own card (card1) observed during the arm
+#
+round1 | ff_base ddl=49765 q1=54 win=49820 r10=0.9980 r100=0.9782 qtop10=70.3 qtop100=55.1 | ff_cand ddl=49306 q1=61 win=49367 r10=0.9990 r100=0.9796 qtop10=72.4 qtop100=54.8 | ratio=1.0092 | qps_geo=1.0121
+round3 | ff_base ddl=49713 q1=57 win=49771 r10=0.9990 r100=0.9794 qtop10=70.0 qtop100=55.3 | ff_cand ddl=49906 q1=62 win=49968 r10=0.9980 r100=0.9801 qtop10=68.9 qtop100=55.1 | ratio=0.9961 | qps_geo=0.9903
+round4 | ff_base ddl=49509 q1=58 win=49567 r10=0.9980 r100=0.9815 qtop10=70.9 qtop100=50.0 | ff_cand ddl=47012 q1=60 win=47073 r10=0.9990 r100=0.9805 qtop10=70.9 qtop100=56.2 | ratio=1.0530 | qps_geo=1.0602
+round5 | ff_base ddl=48834 q1=57 win=48891 r10=0.9990 r100=0.9785 qtop10=69.4 qtop100=55.6 | ff_cand ddl=48805 q1=58 win=48864 r10=0.9980 r100=0.9795 qtop10=71.2 qtop100=56.5 | ratio=1.0006 | qps_geo=1.0211
+MEAN win ratio over 4 rounds = 1.0147
+MEAN qps geo ratio = 1.0209 (min 0.9903)
+#
+# Per-round VRAM peak, our card only (bytes, from the .vram samples):
+round1 ff_base card1 all_peak 862412800.0
+round1 ff_cand card1 all_peak 862367744.0
+round3 ff_base card1 all_peak 862388224.0
+round3 ff_cand card1 all_peak 862384128.0
+round4 ff_base card1 all_peak 862392320.0
+round4 ff_cand card1 all_peak 862392320.0
+round5 ff_base card1 all_peak 862412800.0
+round5 ff_cand card1 all_peak 862392320.0
+#   -> 0.8032 GB in every arm, candidate never above baseline (ratio <= 1.0000).
+#
+# Caveat we are writing down rather than hiding: the .vram sampler of round2's aborted arm
+# was never killed (the runner exited before its stop step), so round3/round5's ff_base.vram
+# contain samples from that orphan sampler as well. The maxima above are therefore quoted as
+# "peak observed during the arm", not as a strict ddl_start..ddl_end window peak; the strict
+# window peak in these four rounds is 0.624-0.803 GB depending on sample alignment. The clean
+# windows for the gate are the earlier arms in vram_peaks.txt (ship_base / nn_base / n256i100 /
+# final_ship), all 0.803 GB, which the repeats agree with.
+#
+# What these four rounds change in the report:
+#  - the shipped default's same-round build speedup is 0.9961x - 1.0530x, mean 1.0147x,
+#    i.e. within the noise band of "identical graph -> identical build time" by design;
+#  - recall of the shipped default: @10 0.9980/0.9990, @100 0.9795-0.9805 -- the delta against
+#    its own same-round baseline alternates +/-0.0010 (@10) and never exceeds -0.0010 (@100),
+#    so the <=0.005 recall gate holds in every round with >=0.004 of margin;
+#  - query gate: worst round qps_geo = 0.9903 vs the 0.90 floor.

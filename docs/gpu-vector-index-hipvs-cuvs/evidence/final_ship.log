@@ -1,0 +1,55 @@
+ROWS=250000
+RESULT ship ddl_ms=48358 first_q_ms=115 window_ms=48473
+grep: /workspace/final_ship/log/observer.log: No such file or directory
+grep: /workspace/final_ship/log/observer.log: No such file or directory
+pre QPS top100 = 55.9 q/s
+pre RECALL recall@10=0.9970 recall@100=0.9795 queries=100
+pre QPS top10 = 70.2 q/s
+pre RECALL recall@10=0.1000 recall@100=0.0110 queries=10
+VRAM samples=1312 ddl_peak=0.891GB cards=card2:0.891 card1:0.803 card7:0.026
+=== PHASE 2: restart on the same data-dir (no load, no DDL) ===
+cp: cannot stat '/workspace/final_ship/log/observer.log': No such file or directory
+grep: /workspace/final_ship/log/observer.log: No such file or directory
+RESULT restarted first_q_ms=405
+post QPS top100 = 53.6 q/s
+post RECALL recall@10=0.9970 recall@100=0.9795 queries=100
+post QPS top10 = 69.7 q/s
+post RECALL recall@10=0.1000 recall@100=0.0110 queries=10
+POST top100 ids identical to pre-restart
+POST top10 ids identical to pre-restart
+snapshot_serialize_lines_before= after=
+FINAL_SHIP_DONE
+
+# ---------------------------------------------------------------------------
+# run: bash /workspace/final_ship.sh, AMD Radeon Cloud (gfx1100, ROCm 7.2.4).
+# Candidate binary /workspace/src2/build_release/src/observer/seekdb (revision f310b91)
+# + bridge /workspace/out_final/libseekdb_cuvs_bridge.so (md5
+# fb0c860c969df9cd9082477b610e7cae), built from the repo file byte-for-byte.
+# No SEEKDB_CUVS_* build knob is set, so this is the shipped default:
+# nn_descent, intermediate_graph_degree = 2*graph_degree = 256, nn_descent_niter = 100.
+#
+# Two transcript notes:
+#  - the 'queries=10' RECALL lines are an artifact of feeding a 10-ids-per-query result
+#    file to the 100-per-query comparer; the top-10 QPS numbers are valid, those two
+#    recall lines are not. The real measurement is the queries=100 line (0.9970/0.9795).
+#  - the in-script greps found nothing because this build names the log log/seekdb.log,
+#    not log/observer.log. Re-read directly (see the counts and lines below).
+#
+# $ cd /workspace/final_ship/log
+# $ grep -ac 'serialized GPU CAGRA snapshot'   seekdb.log -> 2
+# $ grep -ac 'deserialized GPU CAGRA snapshot' seekdb.log -> 1
+# $ grep -ac 'built GPU CAGRA index without duplicate VSAG' seekdb.log -> 0
+# $ grep -ac 'lazily built VSAG fallback' seekdb.log -> 0
+#
+# serialized GPU CAGRA snapshot(key=0x7af210748000, n=250000, dim32=256, degree32=128,
+#   built=true, build_us=43351029, total_us=43663360, graph_bytes=128000000)
+# serialized GPU CAGRA snapshot(key=0x7e00a4ed9000, n64=250000, dim32=256, degree32=128,
+#   graph_bytes=128000000)
+# deserialized GPU CAGRA snapshot(key=0x7e00a4ed9000, n64=250000, dim32=256, degree32=128,
+#   graph_bytes=128000000)
+#
+# meaning: phase 1 built the graph (43.35s of the 48.36s DDL window; graph export +
+# snapshot write = 0.31s), then after a clean kill -TERM + restart on the same data-dir
+# the index came back from the snapshot (one deserialize line, zero build lines) and
+# served byte-identical top-10 and top-100 id lists with the same recall.
+# ---------------------------------------------------------------------------

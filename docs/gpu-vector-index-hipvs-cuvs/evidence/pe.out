@@ -1,0 +1,4 @@
+n=250000 dim=256 lists=1 probes=1 cand=132 degree=128 upload_ms=799 train_ms=800 selfsearch_ms=58730 d2h_ms=264 import_ms=1001 total_ms=61597 10RC=0
+samples=223 peak=1.940GB at t+8.3s span=67.4s
+RECALL probe_out.bin recall@10=1.0000 recall@100=0.9998
+PROBE_EXACT_DONE

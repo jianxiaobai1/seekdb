@@ -1,0 +1,29 @@
+# End-to-end build-window A/B, AMD Radeon Cloud (gfx1100 / Radeon PRO W7900, ROCm 7.2.4)
+# 250,000 x 128 uniform-random vectors, L2, DDL: type=hnsw, lib=cuvs, m=16, ef_construction=200, ef_search=64
+# All arms: same instance, same session, same data, same observer parameters; 100 queries,
+# recall computed against the exact top-100 from seekdb's own exact KNN.
+#
+# arm                            build knobs              ddl_ms  first_q_ms  recall@10  recall@100
+# basegpu  frozen 634888d + V5    inter=256 niter=100     46258       61        1.0000      0.9996
+# cand_bp  mine, same knobs       inter=256 niter=100     46000       57        1.0000      0.9997
+# cand_tuned mine                 inter=256 niter=80      40080      106        1.0000      0.9987
+# cand_fp16 mine, fp16 graph      inter=256 niter=80      38761       53        1.0000      0.9995
+#
+# Notes
+# - The image's prebuilt /seekdb_workspace/bin/seekdb does NOT contain the cuVS path
+#   (0 'cuVS' lines in its log): its lib=cuvs DDL silently falls back to CPU VSAG HNSW
+#   (ddl 157.6s, recall@10 0.4680 == the CPU HNSW recall). The baseline arm above is
+#   therefore the frozen commit rebuilt with -DOB_BUILD_CUVS=ON, as the evaluator does.
+# - The snapshot change (OBCUVS02 tmpfile round trip -> OBCUVS03 raw adjacency) is worth
+#   ~0.3s here: the baseline's tmpfile lives on tmpfs, so the extra dataset copy is RAM-speed.
+#   DDL breakdown from the candidate's own log: build_us=41958119 total_us=42367701,
+#   i.e. 99% of the window is the cuVS graph build, 0.41s is snapshot + export.
+# - fp16 graph construction is not a win on this hipVS build: build_us 36.06s -> 35.04s only.
+# - 100% of the remaining window is cuvsCagraBuild, so the only way to move the number is
+#   a different graph construction.
+#
+# candidate log lines (the instrumented fields)
+#   cand_bp   : serialized GPU CAGRA snapshot(n=250000, dim32=128, degree32=128, built=true,
+#                build_us=41958119, total_us=42367701, graph_bytes=128000000)
+#   cand_tuned: build_us=36055020, total_us=36353144, graph_bytes=128000000
+#   basegpu   : serialized GPU CAGRA snapshot(built=true, build_us=42008301, graph_bytes=256001713)

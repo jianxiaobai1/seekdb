@@ -1,6 +1,7 @@
 /* seekdb <-> hipVS bridge: CAGRA index build, search and graph snapshot. */
 #include "seekdb_cuvs_bridge.h"
 #include <cuvs/core/c_api.h>
+#include <cuvs/neighbors/all_neighbors.h>
 #include <cuvs/neighbors/cagra.h>
 #include <dlpack/dlpack.h>
 #ifdef __HIP_PLATFORM_AMD__
@@ -12,32 +13,43 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* Build knobs. They are read from the environment so a parameter sweep does not
  * need a rebuild; the defaults in this file are the values the shipped index
  * uses.
  *
- * The intermediate degree stays at twice the output degree. The contest
- * baseline built with intermediate_graph_degree=256 / nn_descent_niter=100 and
- * that shape is what keeps the graph searchable: growing a graph twice as wide
- * as the one that is kept and pruning it down is not wasted work, the pruning
- * pass is what gives the surviving edges their navigability. Measured on
- * 250k x 256 data, building straight at the output degree (128) drops
- * recall@100 from 1.000 to 0.88-0.94 on clustered data, while keeping the
- * intermediate width at 256 and only shortening the refinement rounds to 80
- * keeps recall@100 at 1.000 for 1.18x less build time. See
+ * The intermediate degree stays at twice the output degree and the refine
+ * rounds stay at 100, i.e. the shipped graph is the same graph the contest
+ * baseline builds. That is deliberate: growing a graph twice as wide as the one
+ * that is kept and pruning it down is not wasted work, the pruning pass is what
+ * gives the surviving edges their navigability, and the refine rounds are what
+ * makes it converge. Measured on 250k x 256, building straight at the output
+ * degree (128) costs 0.06-0.12 recall@100 on clustered data and shortening the
+ * refine rounds to 80 costs 0.0050 recall@10 on the real table, which is the
+ * whole ±0.005 recall gate with no margin left. The savings that are left are
+ * in the snapshot and in the graph builder, not in the graph parameters. See
  * docs/gpu-vector-index-hipvs-cuvs/PERF_REPORT.md.
  *
- *   SEEKDB_CUVS_BUILD_ALGO           0 = nn_descent (default), 1 = auto, 2 = ivf_pq
+ *   SEEKDB_CUVS_BUILD_ALGO           0 = nn_descent (default), 1 = auto,
+ *                                    2 = ivf_pq, 3 = exact all-neighbors
  *   SEEKDB_CUVS_GRAPH_DEGREE         degree of the persisted graph (default 128)
  *   SEEKDB_CUVS_INTERMEDIATE_DEGREE  pre-prune degree (default = 2 * graph degree)
- *   SEEKDB_CUVS_NN_DESCENT_NITER     refinement rounds (default 80)
+ *   SEEKDB_CUVS_NN_DESCENT_NITER     refinement rounds (default 100)
+ *   SEEKDB_CUVS_AN_FP16              1 = compute the exact all-neighbors graph
+ *                                     from an fp16 copy of the dataset
+ *   SEEKDB_CUVS_DEBUG                1 = print per-stage build timings on stderr
  * Service-side knobs, they only change search quality and latency:
  *   SEEKDB_CUVS_SEARCH_ITOPK         candidate pool size (default max(topk*4, 512))
  *   SEEKDB_CUVS_SEARCH_WIDTH         graph expansion width (default 4)
+ *
+ * algo=3 is opt-in rather than the default: the exact all-neighbors pass builds
+ * the whole kNN graph on the device and, at 250k x 256, its peak (1.44 GB) is
+ * 1.67x what the nn_descent baseline uses (0.86 GB), which is over the contest
+ * memory gate. Measured numbers are in the report.
  */
 #define SK_CUVS_DEFAULT_DEGREE 128
-#define SK_CUVS_DEFAULT_NITER 80
+#define SK_CUVS_DEFAULT_NITER 100
 
 typedef struct {
   cuvsResources_t          res;
@@ -70,8 +82,10 @@ static int sk_env_algo(void)
 {
   const char *v = getenv("SEEKDB_CUVS_BUILD_ALGO");
   if (v == NULL || v[0] == '\0') { return 0; }
+  if (strcmp(v, "nn_descent") == 0) { return 0; }
   if (strcmp(v, "auto") == 0) { return 1; }
   if (strcmp(v, "ivf_pq") == 0 || strcmp(v, "ivf") == 0) { return 2; }
+  if (strcmp(v, "all_neighbors") == 0 || strcmp(v, "exact") == 0) { return 3; }
   return 0;
 }
 
@@ -92,22 +106,258 @@ static void sk_cuvs_fill_tensor(DLManagedTensor *t, void *data, long *shape,
   t->deleter                      = NULL;
 }
 
+/* IEEE-754 binary32 -> binary16, round to nearest even. */
+static uint16_t sk_float_to_half(float f)
+{
+  uint32_t x;
+  uint32_t sign;
+  int32_t exp;
+  uint32_t mant;
+  memcpy(&x, &f, sizeof(x));
+  sign = (x >> 16) & 0x8000u;
+  if (((x >> 23) & 0xffu) == 0xffu) {
+    return (uint16_t)(sign | 0x7c00u | ((x & 0x7fffffu) ? 0x200u : 0u));
+  }
+  exp = (int32_t)((x >> 23) & 0xffu) - 127 + 15;
+  mant = x & 0x7fffffu;
+  if (exp >= 0x1f) { return (uint16_t)(sign | 0x7c00u); }
+  if (exp <= 0) {
+    uint32_t shift;
+    uint32_t half;
+    if (exp < -10) { return (uint16_t)sign; }
+    mant |= 0x800000u;
+    shift = (uint32_t)(14 - exp);
+    half = mant >> shift;
+    if (((mant >> (shift - 1)) & 1u) && ((mant & ((1u << (shift - 1)) - 1u)) != 0u ||
+                                       (((mant >> (shift - 1)) & 1u) && ((half & 1u) == 0u)))) {
+      half += 1;
+    }
+    return (uint16_t)(sign | half);
+  }
+  {
+    uint32_t half = ((uint32_t)exp << 10) | (mant >> 13);
+    uint32_t rest = mant & 0x1fffu;
+    if (rest > 0x1000u || (rest == 0x1000u && (half & 1u))) { half += 1; }
+    return (uint16_t)(sign | half);
+  }
+}
+
+static int sk_env_flag(const char *name)
+{
+  const char *v = getenv(name);
+  if (v == NULL || v[0] == '\0') { return 0; }
+  return strtol(v, NULL, 10) != 0;
+}
+
+
 /* Builds the index with explicit knobs; degree/inter_degree/niter <= 0 means
+ * "use the default". Returns NULL on failure. */
+/* Builds the graph on an fp16 copy of the dataset and then serves it from the
+ * fp32 dataset. NN-descent is bandwidth bound, so halving the dataset bytes
+ * roughly halves the build time, while the search still walks the same topology
+ * and computes its distances against the fp32 vectors. */
+static void *sk_cuvs_build_fp16_graph(const float *base, long n, long dim,
+                                       int algo, long degree, long inter_degree, long niter)
+{
+  void *result = NULL;
+  uint16_t *half = NULL;
+  cuvsResources_t res = 0;
+  cuvsCagraIndexParams_t hparams = NULL;
+  cuvsCagraIndex_t hidx = NULL;
+  unsigned *graph = NULL;
+  long gn = 0, gdegree = 0;
+  DLManagedTensor dset, gset;
+  long ds[2];
+
+  half = (uint16_t *)malloc((size_t)n * (size_t)dim * sizeof(uint16_t));
+  if (half == NULL) { return NULL; }
+  for (long i = 0; i < n * dim; i++) { half[i] = sk_float_to_half(base[i]); }
+
+  if (cuvsResourcesCreate(&res) != CUVS_SUCCESS) { goto out; }
+  if (cuvsCagraIndexParamsCreate(&hparams) != CUVS_SUCCESS) { goto out; }
+  hparams->metric                     = L2Expanded;
+  hparams->build_algo                 = (algo == 1) ? AUTO_SELECT
+                                      : (algo == 2) ? IVF_PQ : NN_DESCENT;
+  hparams->graph_degree               = (uint32_t)degree;
+  hparams->intermediate_graph_degree  = (uint32_t)inter_degree;
+  hparams->nn_descent_niter           = (uint32_t)niter;
+  if (cuvsCagraIndexCreate(&hidx) != CUVS_SUCCESS) { goto out; }
+  ds[0] = n;
+  ds[1] = dim;
+  sk_cuvs_fill_tensor(&dset, half, ds, kDLFloat, 16, kDLCPU);
+  if (cuvsCagraBuild(res, hparams, &dset, hidx) != CUVS_SUCCESS) { goto out; }
+  if (cuvsCagraIndexGetGraph(hidx, &gset) != CUVS_SUCCESS) { goto out; }
+  gn = (long)gset.dl_tensor.shape[0];
+  gdegree = (long)gset.dl_tensor.shape[1];
+  if (gn <= 0 || gdegree <= 0) { goto out; }
+  graph = (unsigned *)malloc(sizeof(unsigned) * (size_t)gn * (size_t)gdegree);
+  if (graph == NULL) { goto out; }
+  if (cudaMemcpy(graph, gset.dl_tensor.data,
+                 sizeof(unsigned) * (size_t)gn * (size_t)gdegree,
+                 cudaMemcpyDefault) != cudaSuccess) { goto out; }
+  if (gset.deleter != NULL) { gset.deleter(&gset); }
+  result = seekdb_cuvs_import(base, n, dim, graph, gdegree);
+out:
+  if (graph != NULL) { free(graph); }
+  if (hidx != NULL) { cuvsCagraIndexDestroy(hidx); }
+  if (hparams != NULL) { cuvsCagraIndexParamsDestroy(hparams); }
+  if (res != 0) { cuvsResourcesDestroy(res); }
+  if (half != NULL) { free(half); }
+  return result;
+}
+
+/* Builds the graph with an exact all-neighbors pass instead of NN-descent.
+ *
+ * NN-descent re-reads the whole dataset once per refinement round, so a graph
+ * of degree 128 at 100 rounds costs 100 passes over 128 MB. The brute force
+ * all-neighbors pass computes the same distances once in a single GEMM, and the
+ * mutual-reachability core distances reproduce the pruning that makes the
+ * neighbor lists navigable. The result is handed to CAGRA as a ready graph, so
+ * the search side is unchanged.
+ *
+ * Returns NULL when the build fails; the caller then falls back to NN-descent. */
+static long sk_now_us(void)
+{
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (long)ts.tv_sec * 1000000L + ts.tv_nsec / 1000L;
+}
+
+/* Returns NULL when the build fails; the caller then falls back to NN-descent.
+ * fp16 non-zero runs the neighbour search on half-precision vectors: the
+ * distance pass is the dominant cost and it is bound by tensor throughput and
+ * memory traffic, both of which halve. The graph is still imported against the
+ * original fp32 vectors, so queries and stored data keep full precision. */
+static void *sk_cuvs_build_all_neighbors(const float *base, long n, long dim, long degree, int fp16)
+{
+  void *result = NULL;
+  cuvsResources_t res = 0;
+  cuvsAllNeighborsIndexParams_t params = NULL;
+  void *data_dev = NULL;
+  uint16_t *half_host = NULL;
+  int64_t *idx_dev = NULL;
+  float *dist_dev = NULL;
+  float *core_dev = NULL;
+  unsigned *graph = NULL;
+  int64_t *idx_host = NULL;
+  DLManagedTensor dset, idx_t, dist_t, core_t;
+  long ds[2], is[2], dis[2];
+  float alpha = 1.2f;
+  long t_all, t_up = 0, t_build = 0, t_d2h = 0, t_prune = 0, t_import = 0;
+  size_t data_bytes = 0;
+
+  t_all = sk_now_us();
+  if (cuvsResourcesCreate(&res) != CUVS_SUCCESS) { return NULL; }
+  if (cuvsAllNeighborsIndexParamsCreate(&params) != CUVS_SUCCESS) { goto out; }
+  params->algo          = CUVS_ALL_NEIGHBORS_ALGO_BRUTE_FORCE;
+  params->metric        = L2Expanded;
+  params->n_clusters    = 1;      /* device dataset: no partitioning */
+  params->overlap_factor = 1;
+
+  data_bytes = (fp16 ? sizeof(uint16_t) : sizeof(float)) * (size_t)n * (size_t)dim;
+  if (cuvsRMMAlloc(res, &data_dev, data_bytes) != CUVS_SUCCESS) { goto out; }
+  if (cuvsRMMAlloc(res, (void **)&idx_dev, sizeof(int64_t) * (size_t)n * (size_t)degree) != CUVS_SUCCESS) { goto out; }
+  if (cuvsRMMAlloc(res, (void **)&dist_dev, sizeof(float) * (size_t)n * (size_t)degree) != CUVS_SUCCESS) { goto out; }
+  if (cuvsRMMAlloc(res, (void **)&core_dev, sizeof(float) * (size_t)n) != CUVS_SUCCESS) { goto out; }
+  if (fp16) {
+    size_t cnt = (size_t)n * (size_t)dim;
+    size_t i;
+    half_host = (uint16_t *)malloc(data_bytes);
+    if (half_host == NULL) { goto out; }
+    for (i = 0; i < cnt; i++) { half_host[i] = sk_float_to_half(base[i]); }
+    if (cudaMemcpy(data_dev, half_host, data_bytes, cudaMemcpyHostToDevice) != cudaSuccess) { goto out; }
+  } else {
+    if (cudaMemcpy(data_dev, base, data_bytes, cudaMemcpyHostToDevice) != cudaSuccess) { goto out; }
+  }
+  t_up = sk_now_us();
+
+  ds[0] = n; ds[1] = dim;
+  is[0] = n; is[1] = degree;
+  dis[0] = n; dis[1] = degree;
+  sk_cuvs_fill_tensor(&dset, data_dev, ds, kDLFloat, fp16 ? 16 : 32, kDLCUDA);
+  sk_cuvs_fill_tensor(&idx_t, idx_dev, is, kDLInt, 64, kDLCUDA);
+  sk_cuvs_fill_tensor(&dist_t, dist_dev, dis, kDLFloat, 32, kDLCUDA);
+  sk_cuvs_fill_tensor(&core_t, core_dev, ds, kDLFloat, 32, kDLCUDA);
+  core_t.dl_tensor.ndim = 1;
+  core_t.dl_tensor.shape = ds;
+
+  if (cuvsAllNeighborsBuild(res, params, &dset, &idx_t, &dist_t, &core_t, alpha) != CUVS_SUCCESS) {
+    fprintf(stderr, "[seekdb_cuvs] all-neighbors build failed: %s\n", cuvsGetLastErrorText());
+    goto out;
+  }
+  t_build = sk_now_us();
+
+  idx_host = (int64_t *)malloc(sizeof(int64_t) * (size_t)n * (size_t)degree);
+  graph = (unsigned *)malloc(sizeof(unsigned) * (size_t)n * (size_t)degree);
+  if (idx_host == NULL || graph == NULL) { goto out; }
+  if (cudaMemcpy(idx_host, idx_dev, sizeof(int64_t) * (size_t)n * (size_t)degree,
+                 cudaMemcpyDeviceToHost) != cudaSuccess) { goto out; }
+  t_d2h = sk_now_us();
+
+  /* Drop self references and any padding the pruner left behind, then keep the
+   * neighbour count at `degree` by repeating the last valid neighbour. */
+  for (long i = 0; i < n; i++) {
+    int64_t *row = idx_host + (size_t)i * (size_t)degree;
+    unsigned *grow = graph + (size_t)i * (size_t)degree;
+    long valid = 0;
+    for (long j = 0; j < degree; j++) {
+      if (row[j] >= 0 && row[j] < n && row[j] != i) { row[valid++] = row[j]; }
+    }
+    if (valid == 0) { row[0] = (i + 1) % n; valid = 1; }
+    for (long j = valid; j < degree; j++) { row[j] = row[valid - 1]; }
+    for (long j = 0; j < degree; j++) { grow[j] = (unsigned)row[j]; }
+  }
+  t_prune = sk_now_us();
+
+  result = seekdb_cuvs_import(base, n, dim, graph, degree);
+  t_import = sk_now_us();
+  if (sk_env_flag("SEEKDB_CUVS_DEBUG")) {
+    fprintf(stderr, "[seekdb_cuvs] all_neighbors fp16=%d n=%ld dim=%ld degree=%ld"
+                    " upload=%ld build=%ld d2h=%ld prune=%ld import=%ld total=%ld (ms)\n",
+            fp16, n, dim, degree, (t_up - t_all) / 1000, (t_build - t_up) / 1000,
+            (t_d2h - t_build) / 1000, (t_prune - t_d2h) / 1000,
+            (t_import - t_prune) / 1000, (t_import - t_all) / 1000);
+  }
+out:
+  if (graph != NULL) { free(graph); }
+  if (idx_host != NULL) { free(idx_host); }
+  if (half_host != NULL) { free(half_host); }
+  if (core_dev != NULL) { cuvsRMMFree(res, core_dev, sizeof(float) * (size_t)n); }
+  if (dist_dev != NULL) { cuvsRMMFree(res, dist_dev, sizeof(float) * (size_t)n * (size_t)degree); }
+  if (idx_dev != NULL) { cuvsRMMFree(res, idx_dev, sizeof(int64_t) * (size_t)n * (size_t)degree); }
+  if (data_dev != NULL) { cuvsRMMFree(res, data_dev, data_bytes); }
+  if (params != NULL) { cuvsAllNeighborsIndexParamsDestroy(params); }
+  if (res != 0) { cuvsResourcesDestroy(res); }
+  return result;
+}
+
+/* Builds an index with the explicit knobs; degree/inter_degree/niter <= 0 mean
  * "use the default". Returns NULL on failure. */
 void *seekdb_cuvs_build_tuned(const float *base, long n, long dim,
                               int algo, long degree, long inter_degree, long niter)
 {
+  sk_cuvs_index *h = NULL;
   if (base == NULL || n <= 0 || dim <= 0) { return NULL; }
-  sk_cuvs_index *h = (sk_cuvs_index *)calloc(1, sizeof(*h));
-  if (h == NULL) { return NULL; }
-  pthread_mutex_init(&h->mu, NULL);
-  if (cuvsResourcesCreate(&h->res) != CUVS_SUCCESS) { goto fail_res; }
-
   if (degree <= 0) { degree = SK_CUVS_DEFAULT_DEGREE; }
   if (inter_degree <= 0) { inter_degree = degree * 2; }
   if (niter <= 0) { niter = SK_CUVS_DEFAULT_NITER; }
   if (inter_degree < degree) { inter_degree = degree; }
-
+  if (algo == 3) {
+    void *built = sk_cuvs_build_all_neighbors(base, n, dim, degree,
+                                              sk_env_flag("SEEKDB_CUVS_AN_FP16"));
+    if (built != NULL) { return built; }
+    fprintf(stderr, "[seekdb_cuvs] all-neighbors build failed, using nn_descent\n");
+    algo = 0;
+  }
+  if (sk_env_flag("SEEKDB_CUVS_BUILD_FP16")) {
+    void *fp32 = sk_cuvs_build_fp16_graph(base, n, dim, algo, degree, inter_degree, niter);
+    if (fp32 != NULL) { return fp32; }
+    fprintf(stderr, "[seekdb_cuvs] fp16 graph build unavailable, using fp32\n");
+  }
+  h = (sk_cuvs_index *)calloc(1, sizeof(*h));
+  if (h == NULL) { return NULL; }
+  pthread_mutex_init(&h->mu, NULL);
+  if (cuvsResourcesCreate(&h->res) != CUVS_SUCCESS) { goto fail_res; }
   {
     DLManagedTensor dset;
     long ds[2];
@@ -147,7 +397,6 @@ void *seekdb_cuvs_build(const float *base, long n, long dim)
                                  sk_env_long("SEEKDB_CUVS_INTERMEDIATE_DEGREE", 0),
                                  sk_env_long("SEEKDB_CUVS_NN_DESCENT_NITER", SK_CUVS_DEFAULT_NITER));
 }
-
 /* Grows the device buffers so a search never allocates. Returns 0 on success. */
 static int sk_cuvs_reserve(sk_cuvs_index *h, size_t q_elems, size_t o_elems)
 {

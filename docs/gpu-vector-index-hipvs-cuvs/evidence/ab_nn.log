@@ -1,0 +1,19 @@
+### SHIP ARM A: frozen baseline binary + baseline bridge
+ERROR 1231 (42000) at line 1: Variable 'max_allowed_packet' can't be set to the value of '2000000000'
+ROWS=250000
+RESULT nn_base ddl_ms=50491 first_q_ms=56 window_ms=50547
+QPS nn_base top100 = 54.8 q/s
+RECALL nn_base recall@10=1.0000 recall@100=0.9799 queries=100
+QPS nn_base top10 = 67.4 q/s
+awk: run time error: not enough arguments passed to printf("PEAK %s %s=%d ")
+	FILENAME="/workspace/ab256/nn_base.vram" FNR=1232 NR=1232
+PEAK card3 28028928=### SHIP ARM B: candidate binary + shipped bridge (default = nn_descent niter=80)
+ERROR 1231 (42000) at line 1: Variable 'max_allowed_packet' can't be set to the value of '2000000000'
+ROWS=250000
+RESULT nn_cand ddl_ms=40802 first_q_ms=61 window_ms=40863
+QPS nn_cand top100 = 56.0 q/s
+RECALL nn_cand recall@10=0.9950 recall@100=0.9753 queries=100
+QPS nn_cand top10 = 70.7 q/s
+awk: run time error: not enough arguments passed to printf("PEAK %s %s=%d ")
+	FILENAME="/workspace/ab256/nn_cand.vram" FNR=1152 NR=1152
+PEAK card3 28028928=NN_AB_DONE

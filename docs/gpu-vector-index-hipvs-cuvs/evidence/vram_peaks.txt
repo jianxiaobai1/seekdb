@@ -1,0 +1,36 @@
+# VRAM peaks per arm, recomputed offline from the *.vram sample files
+# (the in-script `awk PEAK` line has a printf bug and prints "PEAK cardN <bytes>=", so the
+#  numbers below come from replaying each arm's .marks ddl_start/ddl_end window over its
+#  .vram samples -- same logic as the python block in final_ship.sh).
+#
+# The instance is shared: several GPUs carry other tenants' processes. The column that
+# tracks our own observer is card1 (its peak moves with n and dim, the others do not:
+# card2 sits at 0.891GB in every single arm). Contest gate = our peak <= 1.25x baseline
+# AND <= 45GB.
+#
+# dir      arm           samples  ddl-window peak (card1)  note
+ab256      ship_base       1208   0.803 GB                 frozen baseline binary, 250k x 256, round 1
+ab256      ship_cand       1456   1.438 GB                 candidate + algo=3 exact all-neighbors -> 1.79x, FAILS gate
+ab256      nn_base         1232   0.803 GB                 frozen baseline binary, 250k x 256, round 2
+ab256      nn_cand         1152   0.803 GB                 candidate nn_descent niter=80 (recall gate kills it)
+ab256      n256i100        1184   0.803 GB                 candidate nn_descent niter=100 = shipped config
+ab256      n256i64         1136   0.803 GB                 candidate nn_descent niter=64
+ab256      d128i100         992   0.684 GB                 250k x 128 candidate (dim change -> peak change)
+ab256      d128i64          904   0.684 GB
+ab         b128base        1016   0.684 GB                 frozen baseline binary, 250k x 128, same-round pair
+ab         c128i100        1014   0.684 GB                 candidate, certified bridge /workspace/out_final
+final_ship (store.vram)   1312   0.803 GB                 shipped defaults, no env knob, 250k x 256
+#
+# ratios: shipped / baseline = 0.803/0.803 = 1.00x at 256d, 0.684/0.684 = 1.00x at 128d.
+# absolute headroom vs the 45GB ceiling is enormous; the only path that trips the 1.25x
+# relative gate is the exact kNN graph (all-neighbors 1.79x, IVF-Flat exhaustive 2.42x).
+#
+# IVF-Flat exhaustive self-search probe (probe_exact.out / pe.out):
+#   samples=223 peak=1.940GB at t+8.3s span=67.4s
+# all-neighbors n_clusters sweep (cl_sweep.log, card1 only):
+#   clusters 1 -> 1.438 GB (build 20.5s, recall 1.0000/0.9998)
+#   clusters 4 -> 0.598 GB (build 88.5s, recall 0.9980/0.9766)
+#   clusters 8 -> 0.605 GB (build 35.9s, recall 0.9990/0.9772)
+#   clusters16 -> 0.785 GB (build 37.2s, recall 0.9970/0.9758)
+#   clusters32 -> 0.785 GB (build 36.5s, recall 0.9960/0.9774)
+#   clusters64 -> 0.785 GB (build 34.8s, recall 0.9980/0.9768)

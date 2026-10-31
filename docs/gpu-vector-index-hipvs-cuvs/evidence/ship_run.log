@@ -1,0 +1,19 @@
+### SHIP ARM A: frozen baseline binary + baseline bridge
+ERROR 1231 (42000) at line 1: Variable 'max_allowed_packet' can't be set to the value of '2000000000'
+ROWS=250000
+RESULT ship_base ddl_ms=49491 first_q_ms=55 window_ms=49546
+QPS ship_base top100 = 55.2 q/s
+RECALL ship_base recall@10=0.9990 recall@100=0.9797 queries=100
+QPS ship_base top10 = 69.8 q/s
+awk: run time error: not enough arguments passed to printf("PEAK %s %s=%d ")
+	FILENAME="/workspace/ab256/ship_base.vram" FNR=1208 NR=1208
+PEAK card3 28028928=### SHIP ARM B: candidate binary + shipped bridge (default = exact all-neighbors)
+ERROR 1231 (42000) at line 1: Variable 'max_allowed_packet' can't be set to the value of '2000000000'
+ROWS=250000
+RESULT ship_cand ddl_ms=24963 first_q_ms=52 window_ms=25015
+QPS ship_cand top100 = 55.5 q/s
+RECALL ship_cand recall@10=1.0000 recall@100=0.9998 queries=100
+QPS ship_cand top10 = 71.4 q/s
+awk: run time error: not enough arguments passed to printf("PEAK %s %s=%d ")
+	FILENAME="/workspace/ab256/ship_cand.vram" FNR=1456 NR=1456
+PEAK card3 28028928=SHIP_AB_DONE

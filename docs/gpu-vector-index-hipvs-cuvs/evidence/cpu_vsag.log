@@ -1,0 +1,29 @@
+=== DDL CONTRACT (expect 1235 on the three rejected forms) ===
+STMT: create table ddlc.t_cuvs_ddl(c1 int primary key, c2 vector(4), vector index idx(c2) with (distance=l2, type=hnsw, lib=cuvs))
+  -> OK
+STMT: create table ddlc.t_cuvs_cos(c1 int primary key, c2 vector(4), vector index idx(c2) with (distance=cosine, type=hnsw, lib=cuvs))
+  -> ERROR 1235 (0A000) at line 1: lib=cuvs only supports distance=l2 not supported
+STMT: create table ddlc.t_cuvs_ip(c1 int primary key, c2 vector(4), vector index idx(c2) with (distance=inner_product, type=hnsw, lib=cuvs))
+  -> ERROR 1235 (0A000) at line 1: lib=cuvs only supports distance=l2 not supported
+STMT: create table ddlc.t_vsag_cos(c1 int primary key, c2 vector(4), vector index idx(c2) with (distance=cosine, type=hnsw, lib=vsag))
+  -> OK
+STMT: create table ddlc.t_vsag_ip(c1 int primary key, c2 vector(4), vector index idx(c2) with (distance=inner_product, type=hnsw, lib=vsag))
+  -> OK
+STMT: create table ddlc.t_cuvs_ivf(c1 int primary key, c2 vector(4), vector index idx(c2) with (distance=l2, type=ivf_flat, lib=cuvs))
+  -> ERROR 1235 (0A000) at line 1: ivf vector index lib name not equal to 'OB' is not supported
+=== CPU (lib=vsag) build on the same 250k x 128 table ===
+ROWS=250000
+RESULT vsag250k128 ddl_ms=156994 first_q_ms=169 window_ms=157163
+vsag QPS top100 = 121.1 q/s
+vsag RECALL recall@10=0.4680 recall@100=0.3277 queries=100
+vsag QPS top10 = 175.5 q/s
+CPU_VSAG_DONE
+
+# run: bash /workspace/cpu_vsag.sh on the AMD Radeon Cloud instance (gfx1100, ROCm 7.2.4)
+# candidate binary /workspace/src2/build_release/src/observer/seekdb (revision f310b91),
+# bridge /workspace/out_final/libseekdb_cuvs_bridge.so (md5 fb0c860c969df9cd9082477b610e7cae),
+# same 250k x 128 table (evidence/ab128.log arms) and same DDL parameter string.
+# GPU arm for comparison (same-round, lib=cuvs): ddl 45609ms window 45663ms,
+# recall@10 1.0000 recall@100 0.9997, QPS@100 62.4 -> GPU window 3.44x smaller.
+# DDL contract statements mirror
+# tools/deploy/mysql_test/test_suite/vector_index/t/vector_index_cuvs_ddl.test.

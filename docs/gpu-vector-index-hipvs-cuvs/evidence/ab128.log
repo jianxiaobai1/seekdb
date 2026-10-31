@@ -1,0 +1,11 @@
+ROWS=250000
+RESULT b128base niter=100 ddl_ms=45609 first_q_ms=54 window_ms=45663
+QPS b128base top100 = 62.4 q/s
+RECALL b128base recall@10=1.0000 recall@100=0.9997 queries=100
+QPS b128base top10 = 73.4 q/s
+ROWS=250000
+RESULT c128i100 niter=100 ddl_ms=45047 first_q_ms=164 window_ms=45212
+QPS c128i100 top100 = 62.3 q/s
+RECALL c128i100 recall@10=1.0000 recall@100=0.9993 queries=100
+QPS c128i100 top10 = 73.7 q/s
+D128_AB_DONE
