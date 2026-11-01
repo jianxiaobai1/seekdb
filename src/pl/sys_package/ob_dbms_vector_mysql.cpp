@@ -23,6 +23,8 @@
 #include "share/ob_lob_access_utils.h"
 #include <vector>
 #include <cstdlib>
+#include <algorithm>
+#include <utility>
 
 namespace oceanbase
 {
@@ -639,9 +641,30 @@ int ObDBMSVectorMySql::batch_knn(ObPLExecCtx &ctx, sql::ParamStore &params, comm
         const long served = common::obvsag::cuvs_batch_knn(base.data(), n, bdim,
                                 query.data(), nq, topk, off.data(), dist.data());
         if (served != nq) {
-          ret = OB_NOT_SUPPORTED;
-          LOG_WARN("batch_knn: GPU backend did not serve", K(ret), K(served), K(nq));
-        } else {
+          // The GPU batch path is an optimisation, not a prerequisite. A bridge
+          // that will not serve this call (no GPU, a bridge predating the raw
+          // batch entry point, or a k it cannot answer) used to fail the whole
+          // procedure with OB_NOT_SUPPORTED; answer the same top-k exactly on
+          // the CPU instead so the caller still gets correct neighbours.
+          LOG_WARN("batch_knn: gpu batch backend did not serve, answering exactly on cpu",
+                   K(served), K(nq), K(topk), K(n));
+          std::vector<std::pair<float, long> > cand(static_cast<size_t>(n));
+          for (long r = 0; r < nq; ++r) {
+            const float *qv = query.data() + static_cast<size_t>(r) * bdim;
+            for (long c = 0; c < n; ++c) {
+              const float *bv = base.data() + static_cast<size_t>(c) * bdim;
+              float acc = 0.F;
+              for (int d = 0; d < bdim; ++d) { const float diff = bv[d] - qv[d]; acc += diff * diff; }
+              cand[static_cast<size_t>(c)] = std::make_pair(acc, c);
+            }
+            std::partial_sort(cand.begin(), cand.begin() + topk, cand.end());
+            for (long i = 0; i < topk; ++i) {
+              off[static_cast<size_t>(r) * topk + i] = static_cast<unsigned>(cand[static_cast<size_t>(i)].second);
+              dist[static_cast<size_t>(r) * topk + i] = cand[static_cast<size_t>(i)].first;
+            }
+          }
+        }
+        {
           int64_t affected = 0;
           common::ObSqlString del;
           if (OB_FAIL(del.assign_fmt("DELETE FROM `%.*s`.`%.*s`",

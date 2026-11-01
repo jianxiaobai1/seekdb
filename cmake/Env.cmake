@@ -145,18 +145,15 @@ if (OB_BUILD_SYS_VEC_IDX)
 endif()
 
 if (OB_BUILD_CUVS AND NOT EXISTS "${CUVS_BRIDGE_LIB}")
- # The GPU backend is asked for but without a usable bridge path: take one that
- # is already in the tree or in the GPU image, otherwise build it from
- # tools/hipvs_bridge. Compiling the backend in without a bridge to link would
- # only die later as an undefined-symbol error.
- foreach (cuvs_probe_lib
-      "/work/bridge/libseekdb_cuvs_bridge.so"
-      "${CMAKE_SOURCE_DIR}/tools/hipvs_bridge/libseekdb_cuvs_bridge.so")
-   if (EXISTS "${cuvs_probe_lib}")
-    set(CUVS_BRIDGE_LIB "${cuvs_probe_lib}")
-    break()
-   endif()
- endforeach()
+ # The GPU backend is asked for but without a usable bridge path. The bridge is
+ # the code under evaluation, so take one that is already in this tree, otherwise
+ # build it from tools/hipvs_bridge, and only then fall back to a prebuilt one
+ # lying around in the GPU image: adopting that first would silently link a
+ # bridge that predates this source. Compiling the backend in without a bridge
+ # to link would only die later as an undefined-symbol error.
+ if (EXISTS "${CMAKE_SOURCE_DIR}/tools/hipvs_bridge/libseekdb_cuvs_bridge.so")
+  set(CUVS_BRIDGE_LIB "${CMAKE_SOURCE_DIR}/tools/hipvs_bridge/libseekdb_cuvs_bridge.so")
+ endif()
 endif()
 
 if (OB_BUILD_CUVS AND NOT EXISTS "${CUVS_BRIDGE_LIB}")
@@ -179,6 +176,10 @@ if (OB_BUILD_CUVS AND NOT EXISTS "${CUVS_BRIDGE_LIB}")
   endif()
  else()
   message(WARNING "[hipVS] no bridge and no hipVS found under ${HIPVS_ROOT}")
+ endif()
+ if (NOT EXISTS "${CUVS_BRIDGE_LIB}" AND EXISTS "/work/bridge/libseekdb_cuvs_bridge.so")
+  set(CUVS_BRIDGE_LIB "/work/bridge/libseekdb_cuvs_bridge.so")
+  message(WARNING "[hipVS] using the prebuilt bridge from the GPU image, not the one in tools/hipvs_bridge")
  endif()
  if (NOT EXISTS "${CUVS_BRIDGE_LIB}")
   set(OB_BUILD_CUVS OFF)
