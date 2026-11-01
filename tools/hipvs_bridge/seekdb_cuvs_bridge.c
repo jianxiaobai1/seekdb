@@ -1,7 +1,6 @@
 /* seekdb <-> hipVS bridge: CAGRA index build, search and graph snapshot. */
 #include "seekdb_cuvs_bridge.h"
 #include <cuvs/core/c_api.h>
-#include <cuvs/neighbors/all_neighbors.h>
 #include <cuvs/neighbors/cagra.h>
 #include <dlpack/dlpack.h>
 #ifdef __HIP_PLATFORM_AMD__
@@ -14,6 +13,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+/* The exact all-neighbors builder is recent and not every hipVS ships it. It is
+ * only reachable through SEEKDB_CUVS_BUILD_ALGO=3, which is not the shipped
+ * default, so a bridge built against a hipVS without it keeps the nn_descent
+ * path that the contest actually runs. */
+#if defined(__has_include)
+#  if __has_include(<cuvs/neighbors/all_neighbors.h>)
+#    include <cuvs/neighbors/all_neighbors.h>
+#    define SK_HAVE_ALL_NEIGHBORS 1
+#  endif
+#endif
+#ifndef SK_HAVE_ALL_NEIGHBORS
+#  define SK_HAVE_ALL_NEIGHBORS 0
+#endif
 
 /* Build knobs. They are read from the environment so a parameter sweep does not
  * need a rebuild; the defaults in this file are the values the shipped index
@@ -223,6 +236,7 @@ static long sk_now_us(void)
   return (long)ts.tv_sec * 1000000L + ts.tv_nsec / 1000L;
 }
 
+#if SK_HAVE_ALL_NEIGHBORS
 /* Returns NULL when the build fails; the caller then falls back to NN-descent.
  * fp16 non-zero runs the neighbour search on half-precision vectors: the
  * distance pass is the dominant cost and it is bound by tensor throughput and
@@ -330,6 +344,7 @@ out:
   if (res != 0) { cuvsResourcesDestroy(res); }
   return result;
 }
+#endif  /* SK_HAVE_ALL_NEIGHBORS */
 
 /* Builds an index with the explicit knobs; degree/inter_degree/niter <= 0 mean
  * "use the default". Returns NULL on failure. */
@@ -343,10 +358,14 @@ void *seekdb_cuvs_build_tuned(const float *base, long n, long dim,
   if (niter <= 0) { niter = SK_CUVS_DEFAULT_NITER; }
   if (inter_degree < degree) { inter_degree = degree; }
   if (algo == 3) {
+#if SK_HAVE_ALL_NEIGHBORS
     void *built = sk_cuvs_build_all_neighbors(base, n, dim, degree,
                                               sk_env_flag("SEEKDB_CUVS_AN_FP16"));
     if (built != NULL) { return built; }
     fprintf(stderr, "[seekdb_cuvs] all-neighbors build failed, using nn_descent\n");
+#else
+    fprintf(stderr, "[seekdb_cuvs] hipVS has no all-neighbors builder, using nn_descent\n");
+#endif
     algo = 0;
   }
   if (sk_env_flag("SEEKDB_CUVS_BUILD_FP16")) {

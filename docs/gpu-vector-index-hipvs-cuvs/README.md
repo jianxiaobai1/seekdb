@@ -47,7 +47,17 @@ seekdb_cuvs_build
 seekdb_cuvs_search
 seekdb_cuvs_free
 seekdb_cuvs_cagra_knn
+seekdb_cuvs_serialize        # v2 snapshot: a cuVS-serialized graph file
+seekdb_cuvs_deserialize
+seekdb_cuvs_export_graph     # v3 snapshot: the raw CAGRA adjacency list
+seekdb_cuvs_import
+seekdb_cuvs_free_host
 ```
+
+The three graph entry points are resolved with `dlsym` when the server starts
+instead of being called directly, so an observer built against a bridge that
+predates them still links: it writes and reads the v2 snapshot, and the v3
+snapshot needs a bridge from this tree.
 
 Build seekdb with the resulting library:
 
@@ -58,6 +68,11 @@ Build seekdb with the resulting library:
   -DCUVS_BRIDGE_LIB=/work/bridge/libseekdb_cuvs_bridge.so \
   --make -j64
 ```
+
+`-DCUVS_BRIDGE_LIB` may be left out: `cmake/Env.cmake` then looks for a bridge
+under `/work/bridge` and `tools/hipvs_bridge`, and otherwise builds one from
+this tree with `HIPVS_ROOT` (default `/opt/hipvs`). If no bridge can be found
+the GPU backend is switched off for that build rather than failing at link time.
 
 For a CPU-only build, leave the defaults or pass:
 

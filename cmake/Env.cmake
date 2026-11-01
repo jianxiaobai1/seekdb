@@ -144,6 +144,48 @@ if (OB_BUILD_SYS_VEC_IDX)
  add_definitions(-DOB_BUILD_SYS_VEC_IDX)
 endif()
 
+if (OB_BUILD_CUVS AND NOT EXISTS "${CUVS_BRIDGE_LIB}")
+ # The GPU backend is asked for but without a usable bridge path: take one that
+ # is already in the tree or in the GPU image, otherwise build it from
+ # tools/hipvs_bridge. Compiling the backend in without a bridge to link would
+ # only die later as an undefined-symbol error.
+ foreach (cuvs_probe_lib
+      "/work/bridge/libseekdb_cuvs_bridge.so"
+      "${CMAKE_SOURCE_DIR}/tools/hipvs_bridge/libseekdb_cuvs_bridge.so")
+   if (EXISTS "${cuvs_probe_lib}")
+    set(CUVS_BRIDGE_LIB "${cuvs_probe_lib}")
+    break()
+   endif()
+ endforeach()
+endif()
+
+if (OB_BUILD_CUVS AND NOT EXISTS "${CUVS_BRIDGE_LIB}")
+ if (NOT HIPVS_ROOT)
+  set(HIPVS_ROOT "$ENV{HIPVS_ROOT}")
+ endif()
+ if (NOT HIPVS_ROOT)
+  set(HIPVS_ROOT "/opt/hipvs")
+ endif()
+ if (EXISTS "${HIPVS_ROOT}/lib/libcuvs_c.so")
+  set(cuvs_bridge_built "${PROJECT_BINARY_DIR}/hipvs_bridge/libseekdb_cuvs_bridge.so")
+  execute_process(COMMAND "${CMAKE_SOURCE_DIR}/tools/hipvs_bridge/build.sh" "${cuvs_bridge_built}"
+      RESULT_VARIABLE cuvs_bridge_rc
+      OUTPUT_QUIET ERROR_VARIABLE cuvs_bridge_err)
+  if (cuvs_bridge_rc EQUAL 0 AND EXISTS "${cuvs_bridge_built}")
+   set(CUVS_BRIDGE_LIB "${cuvs_bridge_built}")
+   message(STATUS "[hipVS] built the vector backend bridge at configure time: ${cuvs_bridge_built}")
+  else()
+   message(WARNING "[hipVS] the vector backend bridge did not build:\n${cuvs_bridge_err}")
+  endif()
+ else()
+  message(WARNING "[hipVS] no bridge and no hipVS found under ${HIPVS_ROOT}")
+ endif()
+ if (NOT EXISTS "${CUVS_BRIDGE_LIB}")
+  set(OB_BUILD_CUVS OFF)
+  message(WARNING "[hipVS] OB_BUILD_CUVS=ON cannot be honoured, building without the GPU vector backend")
+ endif()
+endif()
+
 if (OB_BUILD_CUVS)
  add_definitions(-DOB_BUILD_CUVS)
 endif()

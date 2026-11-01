@@ -3,9 +3,13 @@
 // The region is compiled verbatim against minimal stubs of the OceanBase
 // symbols it uses, so typos in the edited code surface without a full seekdb
 // build (which needs ROCm and a 2-hour compile).
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <dlfcn.h>
+#include <istream>
 #include <limits>
 #include <map>
 #include <memory>
@@ -14,6 +18,7 @@
 #include <ostream>
 #include <set>
 #include <sstream>
+#include <unistd.h>
 #include <vector>
 
 // ---- OceanBase stubs -------------------------------------------------------
@@ -60,11 +65,6 @@ extern "C" int   seekdb_cuvs_search(void *handle, const float *query, long nq, l
 extern "C" void  seekdb_cuvs_free(void *handle);
 extern "C" int seekdb_cuvs_serialize(void *handle, const char *filename);
 extern "C" void *seekdb_cuvs_deserialize(const char *filename, long n, long dim);
-extern "C" int   seekdb_cuvs_export_graph(void *handle, unsigned int **out_graph,
-                                          long *out_n, long *out_degree);
-extern "C" void *seekdb_cuvs_import(const float *base, long n, long dim,
-                                    const unsigned int *graph, long degree);
-extern "C" void  seekdb_cuvs_free_host(void *ptr);
 
 // ---- helpers the region uses (copied from the adaptor) ---------------------
 static std::shared_ptr<void> ob_cuvs_wrap(void *handle) {

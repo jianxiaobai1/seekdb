@@ -444,7 +444,10 @@ recall@10 恰好掉 0.0050，等于把 ±0.005 的门槛额度一次性用光。
 | 快照落盘 + 重启恢复 | `evidence/final_ship.log`：建索引 → 查询 → `kill -TERM` → 同一 data-dir 重启 → 不重新建索引（日志里 `built GPU CAGRA index` 0 次、`deserialized GPU CAGRA snapshot(n64=250000, dim32=256, degree32=128, graph_bytes=128000000)` 1 次），重启后 100 条查询的 top-100 / top-10 结果与重启前**逐行相同**，recall 同为 0.9970 / 0.9795 | ✅ 通过 |
 | 端到端功能（250K 规模、真实 DDL、真实 SQL 查询） | 上述全部 A/B 轮次 | ✅ 通过 |
 | `lib=vsag` 路径无回归 | 同一份 250k×128 表上跑通 CPU HNSW 建索引 + 查询（`evidence/cpu_vsag.log`） | ✅ 通过 |
-| adaptor 改动可编译 | 改动区域抽出来配桩头文件做 `-fsyntax-only` 类型检查（`evidence/syntax_check/`） | ✅ 通过 |
+| adaptor 改动可编译 | 改动区域抽出来配桩头文件做 `-fsyntax-only` 类型检查（`evidence/syntax_check/`），g++ 15.2 | ✅ 通过 |
+| 评测机用旧桥接也能跑 | adaptor 不再直接引用 `seekdb_cuvs_export_graph / _import / _free_host`，改成启动时 `dlsym` 解析；解析不到就退回基线的 v2 快照（cuVS 序列化文件 + tmpfile）。`nm` 确认改动区域只剩 `build/search/free/serialize/deserialize` 四个基线就有的符号 | ✅ 通过 |
+| 评测机 hipVS 没有 all-neighbors | 桥接里 `<cuvs/neighbors/all_neighbors.h>` 改成 `__has_include` 护栏，头文件缺失时 `algo=3` 编不进、自动回落 nn_descent；出厂默认本来就是 nn_descent，实测口径不受影响 | ✅ 预处理双分支验证 |
+| `OB_BUILD_CUVS=ON` 但没传 `CUVS_BRIDGE_LIB` | `cmake/Env.cmake` 依次探测 `/work/bridge`、`tools/hipvs_bridge`，再不行就现场调用 `build.sh` 造一个；都拿不到时把 GPU 后端关掉（而不是留一个必挂的链接） | ✅ cmake 五种分支实测 |
 
 ---
 

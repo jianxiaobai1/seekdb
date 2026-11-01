@@ -90,6 +90,7 @@ else()
       libfmt.a)
     # [hipVS/cuVS] optional GPU vector-index backend bridge
     # enable: -DOB_BUILD_CUVS=ON -DCUVS_BRIDGE_LIB=/path/to/libseekdb_cuvs_bridge.so
+    # cmake/Env.cmake resolves and builds the bridge when no path is given.
     if (OB_BUILD_CUVS AND EXISTS "${CUVS_BRIDGE_LIB}")
       target_link_libraries(oblib_lib PUBLIC ${CUVS_BRIDGE_LIB})
     endif()
