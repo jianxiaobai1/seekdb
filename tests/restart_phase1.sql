@@ -1,0 +1,2 @@
+CREATE TABLE r (id BIGINT PRIMARY KEY, v VECTOR(2));
+INSERT INTO r VALUES (1, '[0,0]'), (2, '[1,1]');
