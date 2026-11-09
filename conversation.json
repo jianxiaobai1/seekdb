@@ -1,10 +1,10 @@
 {
   "format": "minivectordb-learning-evidence",
   "rules_version": "agent-learning-evidence-v3-unbounded",
-  "generated_at": "2026-11-09",
+  "generated_at": "2026-11-09T07:16:00Z",
   "synthetic": false,
-  "material_scope": "本次 MiniVectorDB 开发会话（2026-11-09）：赛题与计分规则、技术选型、实现、测试、性能测量与复盘。",
-  "missing_evidence": "选手未亲自执行命令，也未对实验结果做独立解释或修正；因此没有高于 0.5 档的学生证据。",
+  "material_scope": "本次 MiniVectorDB 开发会话（2026-11-09）：赛题与计分规则、技术选型、实现、测试、性能测量、提交前三组复跑与复盘。",
+  "missing_evidence": "选手未亲自执行命令，也未对实验结果做独立解释或修正；H4 为计分询问、H5 为执行委托，均不构成技术理解或验证证据。因此没有高于 0.5 档的学生证据。",
   "submission": {
     "competition": "MiniVectorDB / 2026-competition-round2",
     "repo_url": "https://github.com/oceanbase/seekdb",
@@ -14,7 +14,7 @@
     "artifact": "C++20 单机向量数据库；源码、Dockerfile、README 与本文件同提交。"
   },
   "integrity": {
-    "statement": "本文件由 2026-11-09 的真实开发会话与本地日志整理。user_prompts 与 question_answers 为选手原始输入（仅脱敏本地路径）；conversations 为助手原文；实验结果来自日志原件。未编造交互、命令行输出或实验结果。",
+    "statement": "本文件由 2026-11-09 的真实开发会话与本地日志整理。user_prompts 与 question_answers 为选手原始输入（仅脱敏本地路径）；conversations 为助手原文；E1-E5 实验结果来自日志原件，E6 为提交前 Agent 用 tests/evidence_run.py 复跑的真实输出。未编造交互、命令行输出或实验结果。",
     "redactions": [
       "本地绝对路径替换为 [local-workspace] 或 [competition-statement-attachment]。"
     ],
@@ -58,6 +58,20 @@
       "origin": "human",
       "content": "一、总分构成\n预赛积分榜前50名无需参加\n本次比赛计分总分为 700 分，由原有赛题的 620 分与加赛的两项排名分组成。\n计分部分\t满分\t计算方式\n原有赛题\t620 分\t按各赛题原有规则汇总实际得分\n加赛性能排名\t40 分\t独立排名，第一名 40 分，每下降一名减 0.5 分，最低 0 分\n加赛 Agent prompt 评价排名\t40 分\t独立排名，第一名 40 分，每下降一名减 0.5 分，最低 0 分\n合计\t700 分\t\n最终总分 = 原有赛题实际得分 + 加赛性能排名分 + 加赛 Agent prompt 排名分。\n620 分是原有赛题的满分，不是每位选手直接获得的基础分。原有赛题计分规则不变；后两项分别按各自榜单排名换算，不直接使用性能指标或 Agent 原始评价分作为比赛得分。\n二、加赛计分前提\n加赛的全部正式 MySQL case 必须通过，才有资格获得后两项排名分。MySQL case 不单独计分。\n● 未参加加赛或没有全部通过 MySQL case 的有效版本：两项加赛得分均为 0，不占对应榜单名次。\n● MySQL case 全部通过：分别进行性能评测和 Agent prompt 评价。\n● 性能评测无效：性能分为 0，不占性能榜名次；符合要求的 Agent prompt 材料仍可参与评价排名。\n● Agent prompt 材料未提交、不可读取或无有效学习材料：该项为 0，不占评价榜名次；符合要求的性能结果仍可参与性能排名。\n加赛未通过不影响原有赛题已经取得的分数，不会将原有 620 分部分清零。 平台故障按加赛文档的重测规则处理。\n三、两项排名的梯度计分\n3.1 性能排名分\n根据加赛文档规定的耗时、磁盘 I/O、峰值内存及权重计算综合性能指标，由高到低排序。设性能排名为 r_perf，从 1 开始：\n性能排名分 = max(40 − 0.5 × (r_perf − 1), 0)\n3.2 Agent prompt 排名分\nAgent 按问题理解与学习规划、Prompt 设计与迭代、验证纠错与独立判断、总结复盘与知识迁移等多个维度评审材料，形成原始评价分，并据此独立排序。原始评价分只用于排名，不直接计入比赛总分。\n设 Agent prompt 排名为 r_prompt，从 1 开始：\nAgent prompt 排名分 = max(40 − 0.5 × (r_prompt − 1), 0)\n3.3 排名与得分对照\n两项排名均使用下表，各自独立计算：\n排名\t该项得分\n1\t40\n2\t39.5\n3\t39\n10\t35.5\n20\t30.5\n40\t20.5\n60\t10.5\n80\t0.5\n81 及以后\t0\n同一位选手在两项中的排名可以不同。例如性能排名第 2、Agent prompt 排名第 5，则加赛得分为 39.5 + 38 = 77.5 分。\n3.4 并列规则\n两榜均采用竞赛排名：并列选手获得相同名次和分数，后续名次跳过并列人数。例如两人并列第一，下一人为第三，三人的对应分数为 40、40、39 分。\n性能指标的比较精度及 Agent 原始评价分的汇总方式，以加赛文档为准；不以提交先后打破原始指标相同的并列。\n四、最终参评版本与成绩结算\n每位选手在截止前从自己的正式提交中指定一个最终参评版本；未指定时，采用最优一次 MySQL case 全部通过的正式提交。没有通过版本时，加赛得分为 0。\n性能和 Agent prompt 必须对应同一次提交锁定的源码、Dockerfile 和 prompt 文件，不得拼接不同版本的最佳结果。每位选手在每个榜单最多占一个名次。\n比赛期间显示暂定排名和分数；截止并完成复核后，按所有最终参评版本分别生成两个榜单，再计算最终总分。新增有效参评结果或复核调整可能改变名次，因此不能沿用比赛过程中的历史最高排名分。\n五、计算示例\n情况\t原有赛题实际得分\t性能排名分\tAgent prompt 排名分\t最终总分\n两项均排名第一\t620\t40\t40\t700\n性能第 2，Agent prompt 第 5\t560\t39.5\t38\t637.5\nMySQL case 未全部通过\t560\t0\t0\t560\n性能无效，Agent prompt 第 3\t560\t0\t39\t599\n两项均排名第 81\t560\t0\t0\t560\n按照这个评分规则来写",
       "source": "student"
+    },
+    {
+      "id": "H4",
+      "timestamp": "2026-11-09T07:05:29.512Z",
+      "origin": "human",
+      "source": "student",
+      "content": "所以没分是吧"
+    },
+    {
+      "id": "H5",
+      "timestamp": "2026-11-09T07:11:39.482Z",
+      "origin": "human",
+      "source": "student",
+      "content": "全部你来操作"
     }
   ],
   "question_answers": [
@@ -175,6 +189,13 @@
       "goal": "在题包缺失时，降低隐藏用例导致准入归零的风险。",
       "result": "新增 semantics_test.py 与 2 个崩溃场景；修复 WAL 撕裂尾部不截断、缺主键静默填 0、转义引号跨语句分割、ORDER BY L2_DISTANCE 表达式、WAL 无界增长等缺口；最终 7/7 组通过，查询 0.177 s。",
       "executor": "Agent"
+    },
+    {
+      "phase": "P6 提交前复跑与材料更新",
+      "date": "2026-11-09",
+      "goal": "用独立脚本复跑并列排序、kill -9 恢复与 1 MiB 溢出 TopK，并把真实输出写入材料。",
+      "result": "tests/evidence_run.py 三组全部通过；conversation.json 增补 H4/H5 原始消息与 E6 真实日志。",
+      "executor": "Agent"
     }
   ],
   "experiments": [
@@ -223,6 +244,15 @@
       "student_ran": false,
       "result_summary": "build_exit=0，无告警输出。",
       "raw_log": "[ 33%] Building CXX object CMakeFiles/minivectordb.dir/src/engine.cpp.o\n[ 33%] Building CXX object CMakeFiles/minivectordb.dir/src/main.cpp.o\n[ 66%] Building CXX object CMakeFiles/minivectordb.dir/src/storage.cpp.o\n[ 66%] Building CXX object CMakeFiles/minivectordb.dir/src/vector_index.cpp.o\n[ 83%] Linking CXX executable minivectordb\n[100%] Built target minivectordb\nbuild_exit=0"
+    },
+    {
+      "id": "E6",
+      "question": "提交前复跑三组准入语义：距离并列排序、kill -9 后已提交/未提交可见性、超内存溢出后的精确 TopK。",
+      "command": "python3 tests/evidence_run.py",
+      "executor": "Agent",
+      "student_ran": false,
+      "result_summary": "三组断言全部通过。E1 并列按主键升序：ASC 1,5,2，DESC 9,2,4,1,5；E2 第一次 kill -9 后未提交行 4 消失，第二次 kill -9 后已提交行 5 保留；E3 在 1 MiB 预算下 20000 行全部溢出，启动统计 spilled_rows=20000，点查与两组 TopK 均与 Python 真值一致。脚本 stderr 输出 ALL EXPERIMENTS PASSED。",
+      "raw_log": "binary: [local-workspace]/build/minivectordb\nEVIDENCE_BEGIN\n\n=== E1: distance ties are ordered by primary key ===\nSQL> SELECT id, L2_DISTANCE(v, '[1,0]') AS d FROM t WHERE tag = 'a' ORDER BY d LIMIT 3\n    header: ['id', 'd']\n    row   : ['1', '0.000000']\n    row   : ['5', '0.000000']\n    row   : ['2', '1.414214']\nSQL> SELECT id, L2_DISTANCE(v, '[1,0]') AS d FROM t ORDER BY d DESC LIMIT 5\n    header: ['id', 'd']\n    row   : ['9', '2.000000']\n    row   : ['2', '1.414214']\n    row   : ['4', '1.414214']\n    row   : ['1', '0.000000']\n    row   : ['5', '0.000000']\nE1 expected: ASC 1,5,2 (tie at 0 -> pk 1 before 5; tie at sqrt2 -> 2 before 4); DESC 9,2,4,1,5\n\n=== E2: kill -9 keeps committed rows, drops the open transaction ===\nSQL> SELECT id, note FROM r ORDER BY id\n    header: ['id', 'note']\n    row   : ['1', 'committed']\n    row   : ['2', 'committed']\n    row   : ['3', 'committed']\n    row   : ['4', 'uncommitted']\n    killing -9 with row 4 only inside the open transaction ...\nSQL> SELECT id, note FROM r ORDER BY id\n    header: ['id', 'note']\n    row   : ['1', 'committed']\n    row   : ['2', 'committed']\n    row   : ['3', 'committed']\n    inserted row 5 (auto-commit), killing -9 again ...\nSQL> SELECT id, note FROM r ORDER BY id\n    header: ['id', 'note']\n    row   : ['1', 'committed']\n    row   : ['2', 'committed']\n    row   : ['3', 'committed']\n    row   : ['5', 'after restart']\nE2 expected: after first crash 1,2,3 (row 4 rolled back); after second crash 1,2,3,5 (row 5 survived)\n\n=== E3: 1 MiB budget forces 20k rows to disk; TopK stays exact ===\n    startup stats: minivectordb: data_dir=/tmp/mvdb-e3-8814dzhs tables=1 rows=20000 mode=exact mem_budget=1MiB spilled_rows=20000\n    spool files  : [('tbl_646f6373.spool', 1048576)]\nSQL> SELECT id, category, v FROM docs WHERE id = 12345\n    header: ['id', 'category', 'v']\n    row   : ['12345', 'a', '[26,84,41,68]']\nSQL> SELECT id, L2_DISTANCE(v, '[3,5,8,13]') AS d FROM docs ORDER BY d LIMIT 10\n    header: ['id', 'd']\n    row   : ['14843', '4.795832']\n    row   : ['15136', '5.099020']\n    row   : ['11840', '5.916080']\n    row   : ['17269', '6.082763']\n    row   : ['9414', '6.708204']\n    row   : ['17562', '7.348469']\n    row   : ['4077', '8.306624']\n    row   : ['4370', '8.831761']\n    row   : ['9707', '9.486833']\n    row   : ['12133', '9.695360']\n    expected IDs : ['14843', '15136', '11840', '17269', '9414', '17562', '4077', '4370', '9707', '12133']\nSQL> SELECT id, L2_DISTANCE(v, '[3,5,8,13]') AS d FROM docs WHERE category = 'b' ORDER BY d LIMIT 7\n    header: ['id', 'd']\n    row   : ['15136', '5.099020']\n    row   : ['17269', '6.082763']\n    row   : ['12133', '9.695360']\n    row   : ['1651', '11.269428']\n    row   : ['3985', '11.618950']\n    row   : ['3784', '11.747340']\n    row   : ['9799', '12.247449']\n    expected IDs : ['15136', '17269', '12133', '1651', '3985', '3784', '9799']\nE3 expected: point lookup and both TopK lists match the Python truth even though every row lives in the spool\nEVIDENCE_END\nEXIT=0\n"
     }
   ],
   "iterations": [
@@ -340,6 +370,6 @@
         "note": "以 700 分规则约束开发优先级：功能准入优先，其次性能与材料。规则全文为选手粘贴的比赛材料，只有末尾一句是选手自己的指令。"
       }
     ],
-    "evidence_gap": "选手未亲自执行命令、未对结果做解释或修正，因此没有 1.0 及以上的学生验证实例。材料如实呈现，不用 Agent 产出补足。"
+    "evidence_gap": "选手未亲自执行命令、未对结果做解释或修正，因此没有 1.0 及以上的学生验证实例。H4（\"所以没分是吧\"）是对计分的确认，H5（\"全部你来操作\"）是委托 Agent 执行，均不含技术判断或验证结果，未计入候选。E6 由 Agent 执行，同样不计入学生证据。材料如实呈现，不用 Agent 产出补足。"
   }
 }

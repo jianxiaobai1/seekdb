@@ -97,6 +97,7 @@ __MVDB_END__
 
 ```bash
 bash tests/run_tests.sh          # 7 组：4 组 SQL + 崩溃恢复 + 溢出 + 语义
+python3 tests/evidence_run.py     # 3 组可见实验：并列排序、kill -9 恢复、1 MiB 溢出 TopK
 python3 scripts/bench.py          # 10k×128 维、1000 次 TopK 的冒烟 benchmark
 ```
 
