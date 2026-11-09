@@ -7,7 +7,7 @@
   "missing_evidence": "选手未亲自执行命令，也未对实验结果做独立解释或修正；H4 为计分询问、H5 为执行委托，均不构成技术理解或验证证据。因此没有高于 0.5 档的学生证据。",
   "submission": {
     "competition": "MiniVectorDB / 2026-competition-round2",
-    "repo_url": "https://github.com/oceanbase/seekdb",
+    "repo_url": "https://github.com/jianxiaobai1/seekdb",
     "branch": "2026-competition-round2",
     "commit_sha": "",
     "commit_sha_note": "SHA 由平台提交记录提供；本文件与源码、Dockerfile 位于同一 commit，无法在文件内自引用该 commit 的 SHA。",
