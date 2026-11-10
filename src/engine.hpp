@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <cfloat>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
@@ -249,12 +250,15 @@ inline int64_t parse_int64_strict(const std::string& t) {
 
 class Engine {
 public:
-    explicit Engine(std::string dir) : dir_(std::move(dir)) {}
+    explicit Engine(std::string dir)
+        : dir_(std::move(dir)), cache_limit_(detect_cache_limit()) {}
 
     ~Engine() { close_all(); }
 
     void recover() {
         filesystem_create_directories();
+        std::fprintf(stderr, "minivectordb: row cache limit %llu MiB\n",
+                     static_cast<unsigned long long>(cache_limit_ / (1024 * 1024)));
         const std::string path = dir_ + "/minivectordb.wal";
         fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
         if (fd_ < 0) throw std::runtime_error("cannot open WAL: " + path);
@@ -327,8 +331,35 @@ private:
     bool txn_active_ = false;
     std::unordered_map<uint32_t, std::unordered_map<int64_t, std::optional<Row>>> txn_;
 
-    static constexpr uint64_t CACHE_LIMIT = 32ull * 1024 * 1024;
+    static constexpr uint64_t DEFAULT_CACHE_LIMIT = 32ull * 1024 * 1024;
+    static constexpr uint64_t MIN_CACHE_LIMIT = 4ull * 1024 * 1024;
+    uint64_t cache_limit_ = DEFAULT_CACHE_LIMIT;
     static constexpr uint32_t MAX_RECORD = 512u * 1024 * 1024;
+
+    // Keep the decoded-row cache well below the container memory limit so a
+    // large table cannot push the process into the cgroup OOM killer. With
+    // no limit, or a large one, the 32 MiB default is kept.
+    static uint64_t detect_cache_limit() {
+        const char* paths[] = {"/sys/fs/cgroup/memory.max",
+                               "/sys/fs/cgroup/memory/memory.limit_in_bytes"};
+        for (const char* path : paths) {
+            std::FILE* f = std::fopen(path, "rb");
+            if (!f) continue;
+            char buf[64] = {0};
+            char* got = std::fgets(buf, sizeof(buf), f);
+            std::fclose(f);
+            if (!got || std::strncmp(buf, "max", 3) == 0) continue;
+            errno = 0;
+            char* end = nullptr;
+            unsigned long long v = std::strtoull(buf, &end, 10);
+            if (errno != 0 || end == buf || v == 0) continue;
+            uint64_t limit = v / 8;
+            if (limit < MIN_CACHE_LIMIT) limit = MIN_CACHE_LIMIT;
+            if (limit > DEFAULT_CACHE_LIMIT) limit = DEFAULT_CACHE_LIMIT;
+            return limit;
+        }
+        return DEFAULT_CACHE_LIMIT;
+    }
 
     // -- filesystem --------------------------------------------------------
 
@@ -420,6 +451,26 @@ private:
         pwrite_all(fd_, frame.data(), frame.size(), file_size_);
         if (sync && ::fdatasync(fd_) != 0) throw std::runtime_error("WAL sync failed");
         file_size_ += frame.size();
+        if (sync) trim_page_cache(file_size_);
+    }
+
+    // Cgroup memory accounting includes the WAL page cache. On a memory-tight
+    // container a long append-only file can otherwise fill the limit even
+    // though the pages are clean. Drop all but the newest 4 MiB, in 4 MiB
+    // steps, after durable writes and while replaying. Best effort only.
+    static constexpr uint64_t PAGE_CACHE_KEEP = 4ull * 1024 * 1024;
+    static constexpr uint64_t PAGE_CACHE_STEP = 4ull * 1024 * 1024;
+    uint64_t page_cache_trimmed_ = 0;
+
+    void trim_page_cache(uint64_t current_off) {
+        if (current_off <= PAGE_CACHE_KEEP + PAGE_CACHE_STEP) return;
+        uint64_t upto = current_off - PAGE_CACHE_KEEP;
+        if (upto < page_cache_trimmed_ + PAGE_CACHE_STEP) return;
+        uint64_t from = page_cache_trimmed_;
+        ::posix_fadvise(fd_, static_cast<off_t>(from),
+                        static_cast<off_t>(upto - from),
+                        POSIX_FADV_DONTNEED);
+        page_cache_trimmed_ = upto;
     }
 
     // -- WAL payloads ------------------------------------------------------
@@ -483,6 +534,7 @@ private:
             }
             off = next;
             last_good = next;
+            trim_page_cache(off);
         }
         if (last_good != file_size_) {
             if (::ftruncate(fd_, static_cast<off_t>(last_good)) != 0) {
@@ -596,7 +648,7 @@ private:
         t.locs[pk] = Loc{off, len};
         t.live_bytes += len;
         if (t.cached) {
-            if (t.live_bytes > CACHE_LIMIT) {
+            if (t.live_bytes > cache_limit_) {
                 t.cached = false;
                 t.cache.clear();
                 t.cache.rehash(0);

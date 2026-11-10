@@ -141,6 +141,12 @@
       "role": "agent",
       "source": "agent",
       "content": "再做一轮 ASan/UBSan 构建，并跑公开用例与随机差分测试，以排除未定义行为。"
+    },
+    {
+      "id": "a17",
+      "role": "agent",
+      "source": "agent",
+      "content": "排查容器内存限额下的 OOM：先用 64/48 MiB 只读容器复现，确认固定 32 MiB 行缓存的已推送版本在 48 MiB 限额下、约 5 万行后被 OOM 终止。改为按 cgroup 限额自适应行缓存（1/8，限制 4–32 MiB），并在持久化写入与恢复扫描后回收旧 WAL 页缓存。期间发现 WSL 的 /tmp 是 tmpfs，WAL 会占用不可回收内存，造成与缓存策略无关的假性 OOM；数据目录改到 ext4 后重新测得稳定结果。"
     }
   ],
   "experiments": [
@@ -233,6 +239,15 @@
       "exit_code": 0,
       "output": "Successfully built eccdebe03465\nSuccessfully tagged minivectordb:local\nhandshake: PASS \nsql_crud: PASS \nsql_comparisons: PASS \nsql_ordering: PASS \nsql_empty: PASS \nsql_primary_key: PASS \nsql_unicode: PASS \nsql_bigint: PASS \nsql_unsupported: PASS \nstorage_restart: PASS \nvector_euclidean: PASS \ntransaction_commit: PASS \ntransaction_rollback: PASS \nstorage_mutations: PASS \nstorage_multiple_tables: PASS \nvector_ties_and_filter: PASS \nvector_float32: PASS \nvector_index_maintenance: PASS \ntransaction_failed_insert: PASS \ntransaction_autocommit_atomic: PASS \ntransaction_shutdown_rollback: PASS \nadv_order_variants: PASS \nadv_update_atomic: PASS \nadv_txn_visibility: PASS \nadv_invalid_vectors: PASS \nadv_nested_pk: PASS \nadv_unicode: PASS \nadv_errors: PASS \nadv_topk_forms: PASS \nadv_filter_topk: PASS \nadv_update_delete_all: PASS \nadv_bigint_extra: PASS \nadv2_insert_columns: PASS \nadv2_where_ops: PASS \nadv2_update_multi: PASS \nadv2_empty_and_dupproj: PASS \nadv2_delete_reinsert_txn: PASS \nadv2_order_multi: PASS \nadv2_star_plus_distance: PASS",
       "source": "tool"
+    },
+    {
+      "id": "e11",
+      "title": "容器内存限额自适应缓存：48/64 MiB 只读容器下加载 10–20 万行并重启验证",
+      "command": "docker build -t minivectordb:latest .\nMVD_IMAGE=minivectordb:latest MVD_MEM=64m MVD_ROWS=100000 MVD_QUERIES=10 python3 devtests/docker_mem_test.py\nMVD_IMAGE=minivectordb:latest MVD_MEM=48m MVD_ROWS=100000 MVD_QUERIES=10 python3 devtests/docker_mem_test.py\nMVD_IMAGE=minivectordb:latest MVD_MEM=64m MVD_ROWS=200000 MVD_QUERIES=5 python3 devtests/docker_mem_test.py",
+      "environment": "WSL2 Ubuntu 26.04.1 LTS；Docker Engine 29.1.3，cgroup v2；容器参数 --read-only --network=none --cpus=2 --memory-swap=同值 --pids-limit=128 --cap-drop=ALL；数据目录位于 WSL ext4（/var/tmp）；基础镜像 ubuntu:24.04；本地开发环境，非正式评测环境",
+      "exit_code": 0,
+      "output": "对照（已推送的固定 32 MiB 行缓存版本）：100000 行 / 48 MiB 限额，50,000 行后下一次 INSERT 时容器退出（OOM）。\n自适应版本 100000 行 / 64 MiB：row cache limit 8 MiB；load 22.00s；query 180.95 ms/query；peak cgroup memory 67108864 bytes；wal 52.2 MiB；restart PASS；MEM TEST PASS。\n100000 行 / 48 MiB：row cache limit 6 MiB；load 21.94s；query 149.68 ms/query；peak 50331648 bytes；wal 52.2 MiB；restart PASS；MEM TEST PASS。\n200000 行 / 64 MiB：row cache limit 8 MiB；load 45.28s；query 295.35 ms/query；peak 67108864 bytes；wal 104.4 MiB；restart PASS；MEM TEST PASS。\n测试配置说明：WSL 的 /tmp 是 tmpfs，最初数据目录放在 /tmp 时 WAL 占用不可回收内存，64 MiB 限额下必然 OOM；改用 ext4 目录后得到上述结果。posix_fadvise 的一次性诊断曾返回 rc=0，诊断日志已在最终版本移除。",
+      "source": "tool"
     }
   ],
   "student_evidence_status": {
@@ -252,6 +267,8 @@
     "用户本人对五个评价维度的逐条解释与反思未在本次对话中提供；本文件不代写、不编造学生证据。",
     "尚未在组织方的正式评测容器、资源限额与正式数据规模下运行；Docker 验证仅覆盖本机 Docker 29.1.3 与公开/自建用例。",
     "本文件与源码、Dockerfile 位于同一 commit；完整 40 位 commit SHA 由平台提交记录提供，文件内无法自引用该 commit 的 SHA。",
-    "本地性能数字来自 WSL2 + tmpfs，不代表正式 Linux 容器与正式数据规模下的成绩。"
+    "本地性能数字来自 WSL2 + tmpfs，不代表正式 Linux 容器与正式数据规模下的成绩。",
+    "容器内存限额测试要求 /data 位于磁盘文件系统；tmpfs 会把 WAL 计入不可回收内存，64 MiB 限额下会 OOM（本机已复现并排除该测试配置）。",
+    "自适应缓存仅在本机 cgroup v2 的 48/64 MiB 限额下验证，其他限额机制与更小限额未测试。"
   ]
 }
