@@ -1,0 +1,68 @@
+[
+  {},
+  {
+    "affected_rows": 3
+  },
+  {
+    "affected_rows": 3
+  },
+  {
+    "columns": [
+      "id",
+      "s"
+    ],
+    "rows": [
+      [
+        1,
+        "z"
+      ],
+      [
+        2,
+        "z"
+      ],
+      [
+        3,
+        "z"
+      ]
+    ]
+  },
+  {
+    "affected_rows": 3
+  },
+  {
+    "columns": [
+      "id",
+      "s"
+    ],
+    "rows": []
+  },
+  {
+    "affected_rows": 1
+  },
+  {
+    "columns": [
+      "id",
+      "s"
+    ],
+    "rows": [
+      [
+        5,
+        "e"
+      ]
+    ],
+    "unordered": true
+  },
+  {
+    "columns": [
+      "id",
+      "s"
+    ],
+    "rows": [
+      [
+        5,
+        "e"
+      ]
+    ],
+    "unordered": true
+  }
+]

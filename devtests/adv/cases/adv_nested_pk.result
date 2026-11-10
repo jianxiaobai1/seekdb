@@ -1,0 +1,49 @@
+[
+  {},
+  {
+    "affected_rows": 1
+  },
+  {},
+  {
+    "error": "transaction_error"
+  },
+  {
+    "columns": [
+      "id"
+    ],
+    "rows": [
+      [
+        1
+      ]
+    ]
+  },
+  {},
+  {
+    "error": "unsupported_sql"
+  },
+  {
+    "columns": [
+      "id"
+    ],
+    "rows": [
+      [
+        1
+      ]
+    ]
+  },
+  {},
+  {
+    "affected_rows": 1
+  },
+  {},
+  {
+    "columns": [
+      "id"
+    ],
+    "rows": [
+      [
+        1
+      ]
+    ]
+  }
+]

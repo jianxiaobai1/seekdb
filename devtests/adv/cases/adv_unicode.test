@@ -1,0 +1,10 @@
+CREATE TABLE u (id BIGINT PRIMARY KEY, s VARCHAR(4));
+INSERT INTO u VALUES (1, '汉字测试');
+INSERT INTO u VALUES (2, '😀😀😀😀');
+INSERT INTO u VALUES (3, '汉字测试多');
+INSERT INTO u VALUES (4, '😀😀😀😀😀');
+INSERT INTO u VALUES (5, 'Z'), (6, 'a');
+SELECT id, s FROM u ORDER BY id;
+SELECT id FROM u ORDER BY s;
+SELECT id FROM u WHERE s = '😀😀😀😀';
+SELECT id FROM u WHERE s > 'Z' ORDER BY id;

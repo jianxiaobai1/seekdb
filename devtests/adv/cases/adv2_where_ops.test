@@ -1,0 +1,7 @@
+CREATE TABLE t (id BIGINT PRIMARY KEY, s VARCHAR(8), n BIGINT);
+INSERT INTO t VALUES (1,'apple',10),(2,'banana',20),(3,'cherry',30),(4,'Apple',40),(5,'',50);
+SELECT id FROM t WHERE s >= 'apple' AND n <= 40 ORDER BY id;
+SELECT id FROM t WHERE s < 'b' ORDER BY id;
+SELECT id FROM t WHERE s <> 'apple' AND n >= 20 ORDER BY n DESC;
+SELECT id, s FROM t WHERE id = 2 OR id = 3;
+SELECT id FROM t WHERE n = 20 AND s = 'banana' AND id >= 2;

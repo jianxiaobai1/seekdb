@@ -1,0 +1,10 @@
+CREATE TABLE d (id BIGINT PRIMARY KEY, s VARCHAR(8));
+INSERT INTO d VALUES (1,'a'),(2,'b'),(3,'c');
+UPDATE d SET s = 'z';
+SELECT id, s FROM d ORDER BY id;
+DELETE FROM d;
+SELECT id, s FROM d;
+INSERT INTO d VALUES (5,'e');
+SELECT * FROM d;
+--restart
+SELECT * FROM d;

@@ -1,0 +1,13 @@
+CREATE TABLE t (id BIGINT PRIMARY KEY, v VECTOR(3));
+INSERT INTO t VALUES (1, '[NaN,0,0]');
+INSERT INTO t VALUES (2, '[Infinity,0,0]');
+INSERT INTO t VALUES (3, '[1,2]');
+INSERT INTO t VALUES (4, '[1e39,0,0]');
+INSERT INTO t VALUES (5, '[-1e39,0,0]');
+INSERT INTO t VALUES (6, '[1,2,3]');
+INSERT INTO t VALUES (7, '[1,2,3,4]');
+INSERT INTO t VALUES (8, '[abc,0,0]');
+UPDATE t SET v = '[NaN,0,0]' WHERE id = 6;
+SELECT id FROM t;
+--restart
+SELECT id FROM t;

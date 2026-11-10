@@ -1,0 +1,50 @@
+[
+  {},
+  {
+    "error": "invalid_vector"
+  },
+  {
+    "error": "invalid_vector"
+  },
+  {
+    "error": "dimension_mismatch"
+  },
+  {
+    "error": "invalid_vector"
+  },
+  {
+    "error": "invalid_vector"
+  },
+  {
+    "affected_rows": 1
+  },
+  {
+    "error": "dimension_mismatch"
+  },
+  {
+    "error": "invalid_vector"
+  },
+  {
+    "error": "invalid_vector"
+  },
+  {
+    "columns": [
+      "id"
+    ],
+    "rows": [
+      [
+        6
+      ]
+    ]
+  },
+  {
+    "columns": [
+      "id"
+    ],
+    "rows": [
+      [
+        6
+      ]
+    ]
+  }
+]

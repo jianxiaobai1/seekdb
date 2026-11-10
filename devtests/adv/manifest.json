@@ -1,0 +1,132 @@
+{
+  "version": "dev-adv-v1",
+  "scope": "local-adversarial",
+  "cases": [
+    {
+      "id": "adv_order_variants",
+      "group": "adv",
+      "test": "cases/adv_order_variants.test",
+      "result": "cases/adv_order_variants.result",
+      "statements": 7
+    },
+    {
+      "id": "adv_update_atomic",
+      "group": "adv",
+      "test": "cases/adv_update_atomic.test",
+      "result": "cases/adv_update_atomic.result",
+      "statements": 13
+    },
+    {
+      "id": "adv_txn_visibility",
+      "group": "adv",
+      "test": "cases/adv_txn_visibility.test",
+      "result": "cases/adv_txn_visibility.result",
+      "statements": 13
+    },
+    {
+      "id": "adv_invalid_vectors",
+      "group": "adv",
+      "test": "cases/adv_invalid_vectors.test",
+      "result": "cases/adv_invalid_vectors.result",
+      "statements": 13
+    },
+    {
+      "id": "adv_nested_pk",
+      "group": "adv",
+      "test": "cases/adv_nested_pk.test",
+      "result": "cases/adv_nested_pk.result",
+      "statements": 12
+    },
+    {
+      "id": "adv_unicode",
+      "group": "adv",
+      "test": "cases/adv_unicode.test",
+      "result": "cases/adv_unicode.result",
+      "statements": 10
+    },
+    {
+      "id": "adv_errors",
+      "group": "adv",
+      "test": "cases/adv_errors.test",
+      "result": "cases/adv_errors.result",
+      "statements": 17
+    },
+    {
+      "id": "adv_topk_forms",
+      "group": "adv",
+      "test": "cases/adv_topk_forms.test",
+      "result": "cases/adv_topk_forms.result",
+      "statements": 7
+    },
+    {
+      "id": "adv_filter_topk",
+      "group": "adv",
+      "test": "cases/adv_filter_topk.test",
+      "result": "cases/adv_filter_topk.result",
+      "statements": 9
+    },
+    {
+      "id": "adv_update_delete_all",
+      "group": "adv",
+      "test": "cases/adv_update_delete_all.test",
+      "result": "cases/adv_update_delete_all.result",
+      "statements": 10
+    },
+    {
+      "id": "adv_bigint_extra",
+      "group": "adv",
+      "test": "cases/adv_bigint_extra.test",
+      "result": "cases/adv_bigint_extra.result",
+      "statements": 7
+    },
+    {
+      "id": "adv2_insert_columns",
+      "group": "adv",
+      "test": "cases/adv2_insert_columns.test",
+      "result": "cases/adv2_insert_columns.result",
+      "statements": 8
+    },
+    {
+      "id": "adv2_where_ops",
+      "group": "adv",
+      "test": "cases/adv2_where_ops.test",
+      "result": "cases/adv2_where_ops.result",
+      "statements": 7
+    },
+    {
+      "id": "adv2_update_multi",
+      "group": "adv",
+      "test": "cases/adv2_update_multi.test",
+      "result": "cases/adv2_update_multi.result",
+      "statements": 7
+    },
+    {
+      "id": "adv2_empty_and_dupproj",
+      "group": "adv",
+      "test": "cases/adv2_empty_and_dupproj.test",
+      "result": "cases/adv2_empty_and_dupproj.result",
+      "statements": 7
+    },
+    {
+      "id": "adv2_delete_reinsert_txn",
+      "group": "adv",
+      "test": "cases/adv2_delete_reinsert_txn.test",
+      "result": "cases/adv2_delete_reinsert_txn.result",
+      "statements": 10
+    },
+    {
+      "id": "adv2_order_multi",
+      "group": "adv",
+      "test": "cases/adv2_order_multi.test",
+      "result": "cases/adv2_order_multi.result",
+      "statements": 7
+    },
+    {
+      "id": "adv2_star_plus_distance",
+      "group": "adv",
+      "test": "cases/adv2_star_plus_distance.test",
+      "result": "cases/adv2_star_plus_distance.result",
+      "statements": 4
+    }
+  ]
+}

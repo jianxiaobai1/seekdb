@@ -1,0 +1,66 @@
+[
+  {
+    "error": "table_not_found"
+  },
+  {},
+  {
+    "error": "column_not_found"
+  },
+  {
+    "error": "duplicate_key"
+  },
+  {
+    "columns": [
+      "id"
+    ],
+    "rows": []
+  },
+  {
+    "affected_rows": 1
+  },
+  {
+    "error": "duplicate_key"
+  },
+  {
+    "error": "table_not_found"
+  },
+  {
+    "error": "column_not_found"
+  },
+  {
+    "error": "unsupported_sql"
+  },
+  {
+    "error": "unsupported_sql"
+  },
+  {
+    "columns": [
+      "id"
+    ],
+    "rows": [
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "error": "table_exists"
+  },
+  {},
+  {
+    "error": "index_exists"
+  },
+  {
+    "error": "column_not_found"
+  },
+  {
+    "columns": [
+      "id"
+    ],
+    "rows": [
+      [
+        1
+      ]
+    ]
+  }
+]

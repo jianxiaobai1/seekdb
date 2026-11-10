@@ -1,141 +1,149 @@
-# MiniVectorDB（可运行实现 v0.2）
+# MiniVectorDB
 
-赛题 `2026-competition-round2` 的单机向量数据库实现：**SQL 解析 → 行存 → 精确/过滤 TopK → 事务 → WAL 崩溃恢复** 主链路已打通，并补上了超内存数据溢出和 WAL 阈值 checkpoint。
+单机、单进程、单客户端的轻量向量数据库，实现赛题要求的 SQL 子集、持久化、
+事务与崩溃恢复，通过 stdin/stdout 的 JSON Lines 协议与判题驱动交互。
 
-本地已复跑通过：示例 SQL、错误码与类型校验、过滤 TopK、并列主键排序、事务读己写/回滚、语句失败原子性、重启持久化、`kill -9` 恢复、WAL 撕裂尾部丢弃、1 MiB 预算下 2 万行溢出后的精确检索与恢复。全部用例见 `tests/`，`bash tests/run_tests.sh` 可复跑（7 组全过）。
+## 1. 构建与运行
 
-## 已实现
+- 语言/标准：C++17，无第三方运行时依赖；JSON 解析使用仓库内自带的
+  `src/nlohmann/json.hpp`（3.11.3）。
+- 构建：`make`（或 `g++ -O3 -std=c++17 -DNDEBUG -o minivectordb src/main.cpp`）。
+- 容器镜像：`docker build -t minivectordb:latest .`，多阶段构建，运行阶段仅包含
+  可执行文件。镜像已实际构建并以 `--image` 方式通过官方检查器（见第 4 节）。
+- 启动入口：`/app/minivectordb --data-dir /data`。数据、日志等全部文件位于
+  `/data`；程序不监听网络端口，调试信息只写 stderr。
+- 启动时先完成 WAL 恢复，再向 stdout 输出一行 `{"type":"ready"}` 并 flush；
+  收到 `{"op":"shutdown"}` 时回滚未提交事务、回 `{"id":...,"ok":true}` 后以
+  退出码 0 结束。SIGTERM/SIGINT 同样回滚未提交事务后退出。
 
-| 模块 | 状态 |
-| --- | --- |
-| CREATE TABLE | BIGINT 主键、VARCHAR(n)、VECTOR(n)；单主键、单向量列、重复列名/多主键校验 |
-| CREATE VECTOR INDEX | 元数据持久化；检索本身仍是精确扫描（见限制 2） |
-| INSERT | 多行、可选列清单、主键去重（语句内 + 表内）、缺主键报 1364、整条语句原子 |
-| SELECT | `*`、普通列投影、`= < <= > >= !=`、`AND`、`ORDER BY`（列/别名/`L2_DISTANCE(...)` 表达式，ASC/DESC）、`LIMIT`、`L2_DISTANCE` |
-| 向量检索 | 过滤后 TopK（先 WHERE 再取 K）；距离并列按主键升序；`LIMIT 0` 返回空；检索缓存与记录修改按代际失效 |
-| UPDATE / DELETE | 条件更新/删除；拒绝主键更新；整条语句原子 |
-| 事务 | `BEGIN` / `START TRANSACTION` / `COMMIT`（`END`）/ `ROLLBACK`；事务内读己写；语句失败只回退该语句；DDL 隐式提交 |
-| 内存预算 | 解码行超出 `--mem-budget` 时整表溢出到 mmap 追加文件 `*.spool`；点查、扫描、TopK、更新、删除、恢复仍返回精确结果 |
-| 持久化 | 快照 + 每事务一条 CRC WAL；提交 `fdatasync` 后才应答；WAL 超过 `--wal-checkpoint-mb` 自动 checkpoint；关闭时全量 checkpoint 并截断 WAL |
-| 恢复 | `kill -9` 后重放 WAL；未提交事务不生效；撕裂尾部按长度/CRC 丢弃并**截断文件**，避免后续提交被坏记录挡住；重复恢复幂等 |
-| 协议 | stdin/stdout、READY 标识、逐语句哨兵、stderr 日志、SIGTERM 优雅关闭 |
-
-类型约束按题意校验：VARCHAR 长度按 Unicode 码点计；字符串比较按 UTF-8 字节序（等价 Unicode 码点序）；向量必须是可表示为有限 float32 的数值，拒绝 NaN/Infinity/维度不符/溢出；距离按存储后的 float32 计算，用 double 累加。
-
-## 构建与运行
+本地运行：
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
-./build/minivectordb --data-dir /tmp/mvdb < tests/sample.sql
+make
+rm -rf /tmp/mvd-demo
+./minivectordb --data-dir /tmp/mvd-demo <<'EOF'
+{"id":1,"op":"execute","sql":"CREATE TABLE docs (id BIGINT PRIMARY KEY, content VARCHAR(16), embedding VECTOR(2));"}
+{"id":2,"op":"execute","sql":"INSERT INTO docs VALUES (1, '事务', '[1,0]'), (2, '索引', '[0,1]');"}
+{"id":3,"op":"execute","sql":"SELECT id, L2_DISTANCE(embedding, '[0.9,0.1]') AS d FROM docs ORDER BY d LIMIT 2;"}
+{"id":4,"op":"execute","sql":"BEGIN;"}
+{"id":5,"op":"execute","sql":"DELETE FROM docs WHERE id = 1;"}
+{"id":6,"op":"execute","sql":"ROLLBACK;"}
+{"id":7,"op":"execute","sql":"SELECT id FROM docs ORDER BY id;"}
+{"id":8,"op":"shutdown"}
+EOF
 ```
 
-Docker（正式环境为 Linux x86_64，容器内前台运行）：
+预期输出中 `id=3` 返回两行及各自距离，`id=6` 回滚后 `id=7` 仍能看到 `[1, 2]`。
 
-```bash
-docker build -t minivectordb:latest .
-docker run --rm -i -v minivectordb-data:/data --cpus=2 --memory=2g minivectordb:latest
-```
+重启验证：复用同一 `--data-dir` 再次启动即可，已提交数据完整保留，未提交事务
+不生效。
 
-启动参数：
+## 2. SQL 支持范围
 
-| 参数 | 默认 | 说明 |
-| --- | --- | --- |
-| `--data-dir <dir>` | `/data` | 数据目录；快照、WAL、spool 都写在这里 |
-| `--mode exact\|ann` | `exact` | 当前 ann 仍复用 FlatIndex（精确扫描），结果合法但无加速 |
-| `--sentinel <str>` | `__MVDB_END__` | 每条语句输出后的结束标记；传空串关闭 |
-| `--ready <str>` | `READY` | 恢复完成后的就绪标识 |
-| `--echo-ok` | 关 | DML/DDL 输出 `OK <affected>`，便于本地调试 |
-| `--mem-budget <MB>` | cgroup 限额的 40%（夹在 64 MiB–1 GiB） | 解码行内存上限；超出后整表溢出到 spool，`0` 表示交给自动推导 |
-| `--wal-checkpoint-mb <MB>` | `128` | WAL 超过该大小就在语句间 checkpoint；`0` 只在关闭时 checkpoint |
+- 表结构：`CREATE TABLE [IF NOT EXISTS]`；`BIGINT`、`VARCHAR(n)`、`VECTOR(n)`；
+  恰好一个 `BIGINT PRIMARY KEY`（列级或表级均可），每表至多一个向量列。
+  列级 `NOT NULL` 接受（语义上恒为非空）。
+- 数据操作：`INSERT`（多行、可选列清单）、`SELECT`、`UPDATE`、`DELETE`；
+  按主键或 `WHERE` 条件更新/删除。
+- 查询：列投影、`SELECT *`、`= < <= > >= <>`、`AND`、`ORDER BY`（多键、
+  `ASC/DESC`、别名/表达式）、`LIMIT`。
+- 向量检索：`L2_DISTANCE(col, '[...]')`，精确 TopK；带普通列过滤时先在过滤
+  集合内计算 TopK；`ORDER BY L2_DISTANCE(...)` 无需先投影该列。
+- 索引：`CREATE VECTOR INDEX name ON table(vector_col)`。
+- 事务：`BEGIN`、`COMMIT`、`ROLLBACK`；不显式开启事务时，数据修改语句自动
+  提交；DDL 隐式提交当前事务。
+- 不支持：`NULL`、`JOIN`、聚合、子查询、`ALTER TABLE`、外键、嵌套事务、
+  主键更新、`OR`、`DROP TABLE` 等；一律返回错误响应，不静默执行。
 
-## 临时协议（重点：需按题包替换）
+错误响应形如 `{"id":N,"ok":false,"error":{"code":"duplicate_key","message":"..."}}`；
+`duplicate_key`、`dimension_mismatch`、`invalid_vector`、`value_too_long`、
+`not_null_violation`、`table_not_found`、`column_not_found`、`table_exists`、
+`index_exists`、`unsupported_sql`、`syntax_error` 等代码用于区分失败类别。
 
-> 官方题包尚未发布。协议、错误码、结果格式全部集中在 `src/main.cpp` 和 `src/common.h`，引擎不感知输出格式；拿到题包后只改这两处即可。
+## 3. 实现概要
 
-当前约定：
+### 3.1 存储布局
 
-- 启动恢复完成后打印 `READY`（一行）。
-- stdin 按顶层 `;` 分句；支持字符串内分号、`''` 与 `\'` 转义、`--`/`#`/`/* */` 注释。
-- `SELECT`：先表头，再逐行，列间 `\t`；空结果只输出表头。
-- DML/DDL：默认无输出；`--echo-ok` 时输出 `OK n`。
-- 错误：`ERROR <code>: <message>`，错误码暂用 MySQL 风格（1062 主键重复、1406 超长、1265 取值非法、1364 缺主键、1264 越界、1146 表不存在、1054 列不存在、1050 表已存在、1061 索引已存在、1235 不支持等）。
-- 每条语句响应以 `__MVDB_END__` 结尾（可关闭）。
-- EOF、`exit;`、`quit;`、`\q` 触发优雅关闭：回滚未提交事务 + checkpoint。
-
-示例输出：
-
-```
-READY
-id	content	distance
-1	事务与恢复	0.141421
-2	向量索引	1.272792
-__MVDB_END__
-```
-
-## 存储、事务与恢复设计
-
-文件（全部位于 `--data-dir`）：
-
-- `tbl_<sanitized>.snap`：表快照，`MVSNAP01` + schema + 活行；写入走 `tmp → fsync → rename → fsync(dir)`，rename 原子。
-- `wal.log`：每个事务（或自动提交语句）一条记录：`[u32 payload_len][u32 crc32][payload]`，payload 是操作列表（CREATE_TABLE / CREATE_INDEX / INSERT / UPDATE / DELETE，整行镜像）。
-- `tbl_<sanitized>.spool`：可重建的溢出缓存，mmap 追加写；快照/WAL 才是事实来源。
-
-提交路径：内存就地应用修改并记录 undo/redo → 追加 WAL → `fdatasync` → 应答。未收到成功响应的事务允许整体丢弃。
-
-回滚：逆序回放 undo（旧行镜像），恢复记录内容与可见集合，向量检索随之一致。
-
-恢复：先载入快照，再顺序重放 WAL。记录独立且幂等（INSERT/UPDATE 按主键覆盖，DELETE 删除，CREATE 跳过已存在），因此“checkpoint 写完快照但没来得及截断 WAL”后重复恢复也安全。长度越界或 CRC 不匹配即停止重放，并立即把文件截断到最后一条好记录之后——否则下次启动的新提交会接在垃圾后面，再次崩溃时这些已确认事务会被静默丢掉。
-
-正常关闭：回滚未提交事务 → 全量快照 → 截断 WAL → fsync。运行期间 WAL 超过阈值时，在一条语句结束、事务已提交后触发同样的 checkpoint，避免长时间写入留下一个需要重放很久的巨日志。
-
-内存预算：解码后的行常驻内存；当某张表的驻留行超出预算时，`enforce_budget()` 把最大的表整表编码进 spool，并把行引用改为 `(offset, len)`。扫描、TopK、点查都在需要时从 spool 解码，因此结果仍是精确的；启动加载也按 4096 行一批执行预算检查，避免恢复阶段先把内存打满。
-
-向量检索：`L2_DISTANCE` 使用 float32 存储值、double 累加后开方；TopK 在 WHERE 候选集内计算；排序键为 `(距离, 主键)`，普通 ORDER BY 并列也用主键升序兜底。距离计算走 AVX2/FMA 四累加器内核（运行时探测，无 AVX2 时退回标量）。`FlatIndex` 是当前唯一实现，`ann` 模式复用同一实现，因此 Recall@10 = 1.0。
-
-## 测试
-
-```bash
-bash tests/run_tests.sh          # 7 组：4 组 SQL + 崩溃恢复 + 溢出 + 语义
-python3 tests/evidence_run.py     # 3 组可见实验：并列排序、kill -9 恢复、1 MiB 溢出 TopK
-python3 scripts/bench.py          # 10k×128 维、1000 次 TopK 的冒烟 benchmark
-```
-
-- `tests/sample.sql`：赛题示例 + ROLLBACK 后数据核对。
-- `tests/errors_txn.sql`：错误码、VARCHAR 码点长度、语句失败原子性、事务读己写、回滚、主键更新拒绝。
-- `tests/ties.sql`：过滤 TopK、距离并列主键升序、过滤后取 K、DESC、`LIMIT`、字符串内分号和注释。
-- `tests/restart_phase*.sql`：正常关闭 + 重启快照。
-- `tests/crash_test.py`：未提交事务 rollback、已确认 COMMIT 保留、WAL 撕裂尾部（恢复后再写入再崩溃，验证尾部已截断）、WAL 阈值 checkpoint 后的快照 + 日志尾部恢复。
-- `tests/spill_test.py`：1 MiB 预算 + 2 万行强制溢出，验证点查、过滤/非过滤 TopK、更新、删除、事务与重启恢复仍精确。
-- `tests/semantics_test.py`：转义与注释、Unicode 长度、LIMIT 边界、排序并列、不支持语法、插入原子性、事务状态机、向量校验、TopK 语义、空表、大小写/反引号、重启回读。
-
-本地 benchmark（WSL Ubuntu、Release、10k 行数据量，仅供趋势参考）：
+只有一个追加式 WAL 文件 `/data/minivectordb.wal`，文件头为 8 字节 magic
+`MVDWAL1\n`，其后是若干记录：
 
 ```
-rows=10000 dim=128 batch=100 queries=1000 K=10
-write      :    0.309 s  (32,355 rows/s)
-query      :    0.177 s  (5,650 q/s, 0.18 ms/query)
-peak RSS   :     13.6 MiB
-close+ckpt :    0.007 s
-recovery   :    0.013 s
+[u32 payload_len][u32 crc32][payload]
 ```
 
-## 提交材料
+payload 首字节为记录类型：
 
-- `src/`、`CMakeLists.txt`：完整实现与构建文件。
-- `Dockerfile`：多阶段构建，运行阶段离线可用，入口 `--data-dir /data`。
-- `agent/conversation.json`：Agent prompt 学习材料；根目录 `conversation.json` 为同一份内容，兼容评测入口的不同路径约定。
-- `README.md`：本运行说明。
+- `C`：建表（表 id、表名、列名/类型/长度/主键标记），提交时以 `fsync` 落盘。
+- `X`：创建向量索引的元数据。
+- `T`：一批数据变更（表 id、操作类型 1=upsert/3=delete、主键、行编码长度、
+  行编码），用于自动提交语句和事务提交。
 
-以上文件须位于同一个 commit；提测时提供仓库 HTTPS URL、分支 `2026-competition-round2` 和完整 40 位 SHA。
+行编码：BIGINT 8 字节；VARCHAR 为 `[u32 字节长度][UTF-8 字节]`；VECTOR 为
+`[u32 维度][float32 × 维度]`。向量按 float32 存储，距离以存储后的值计算。
+内存中维护主键到 WAL 绝对偏移的映射用于定位当前版本；最近行数据有 32 MiB
+行缓存，溢出后查询改为顺序扫描 WAL，保证数据量超过内存预算时仍可工作。
 
-## 已知限制（按优先级）
+### 3.2 事务与恢复
 
-1. **协议未对齐题包**：结果格式、错误码、就绪标识、正常退出方式都是临时约定，拿到官方题包后需要按实际驱动调整。
-2. **无真正 ANN**：`CREATE VECTOR INDEX` 只持久化元数据；`ann` 模式仍是精确扫描，Recall@10 = 1.0 但没有索引加速。性能榜要拿分需要实现 IVF-PQ / HNSW，并保证 filter + 增量维护正确。
-3. **每事务一次 `fdatasync`**：写入 benchmark 的持久性正确，但批量写可合并组提交以优化 I/O 与耗时。
-4. **spool 只增不减**：溢出文件是追加写，更新/删除后的旧编码会留在文件里；重启加载会重建引用，但不会压缩文件本身。长时间大量改写的场景需要重写/压实。
-5. **溢出表的过滤靠流式解码**：没有为溢出表建立持久化二级索引，带 WHERE 的查询需要扫完候选行；正确性不受影响。
-6. **不支持项**（赛题不要求，均返回错误）：NULL、JOIN、聚合、子查询、ALTER、外键、嵌套事务、主键更新。
-7. **DDL 事务语义**：CREATE TABLE / CREATE INDEX 会隐式提交当前事务（MySQL 风格），题包若另有约定需调整。
-8. **Dockerfile 未在本机构建**：开发环境没有 Docker，只做了静态检查；首次平台预检时应确认镜像能构建并启动。
+事务期间修改保存在内存 overlay（`table_id -> pk -> optional<Row>`，空值即
+删除）。`COMMIT` 将整个事务编码为单条 `T` 记录，追加并 `fdatasync` 成功后才
+返回成功响应；`ROLLBACK`、关闭、SIGTERM 直接丢弃 overlay。语句失败在应用
+overlay/WAL 之前完成全部校验，因此不会留下部分修改，事务内先前成功的语句仍可
+继续提交或回滚。
+
+恢复时顺序读取 WAL，校验长度与 CRC：只接受完整记录，残尾记录（以及其后的
+字节）被丢弃并 `ftruncate` 到最后一个有效边界，因此恢复过程可被反复中断，
+已确认提交的前缀不会丢失，未完整写出的提交不会部分生效。索引元数据可从 WAL
+恢复；本实现的向量检索不依赖索引加载，恢复完成后即可就绪。
+
+### 3.3 向量检索
+
+`L2_DISTANCE` 返回欧氏距离；TopK 使用大小为 K 的最大堆，距离相同按主键升序，
+普通 `ORDER BY` 的并列项同样按主键升序。带过滤的 TopK 在满足 `WHERE` 的记录
+集合内计算，不会先取全表 K 条再过滤。`search_mode` 为 `exact` 或 `ann` 时均
+使用同一精确扫描路径，ANN 召回率为 1.0；`CREATE VECTOR INDEX` 仅记录元数据，
+新增、更新、删除天然反映到检索结果。
+
+## 4. 验证记录（本地）
+
+- 官方公开用例：20/20 通过（`protocol_check/run.py --command ...`）。
+- Docker 镜像：本机 Docker 29.1.3（WSL2 Ubuntu 26.04）实际执行
+  `docker build -t minivectordb:local .` 成功；随后用官方检查器
+  `python3 protocol_check/run.py --image minivectordb:local ...` 验证容器内启动、
+  JSONL 握手、卷持久化与重启，公开用例 20/20、本地对抗用例 18/18 全部通过。
+- 本地对抗用例：18/18 通过（`devtests/adv`，含多行语句、引号/裸向量、
+  `ORDER BY` 表达式/DESC/无 LIMIT/LIMIT 0、失败语句原子性、事务内向量可见性、
+  非法向量、嵌套 BEGIN、主键更新、Unicode 码点长度与排序、BIGINT 边界、
+  过滤后 TopK、事务内删除后重插同主键等）。
+- 崩溃恢复：8 个场景通过（`devtests/crash_test.py`）：未提交事务强杀回滚、
+  自动提交/显式提交强杀后保留、提交过程中强杀的全有或全无、恢复途中反复强杀、
+  WAL 残尾截断、首启文件头被截断、正常关闭回滚。
+- 协议边界：`devtests/protocol_edge.py` 通过（多行 SQL、反引号标识符、
+  字符串转义、注释、约 0.6 MiB 单行请求、非数字 id、未知 op、SIGTERM、
+  shutdown 后无额外输出）。
+- 随机差分测试：`devtests/fuzz.py` 共 6 组（400 步 + 5×800 步，不同随机种子）
+  通过；用独立的 Python 模型逐语句对照混合 INSERT/UPDATE/DELETE/SELECT、
+  显式事务与回滚、重启、过滤、多形态投影、排序/DESC/LIMIT 的结果，并校验失败
+  多行 INSERT 不留下部分数据。
+- 消毒器构建：`-fsanitize=address,undefined` 版本通过全部 20 个公开用例和
+  300 步随机差分测试，无告警。
+- 小型基准（WSL2，tmpfs，非正式评测环境）：10,000 行 × 128 维，每批 100 行
+  提交，写入 0.63 s（约 15.9k 行/s）；1,000 次 TopK（K=10，一半带过滤）
+  0.92 ms/查询；峰值 RSS 约 17.5 MiB；WAL 5.22 MiB；重启恢复 0.031 s。
+- 超缓存路径：80,000 行 × 128 维（WAL 41.7 MiB，超过 32 MiB 行缓存），
+  加载 4.83 s；过滤/不过滤 TopK 与独立暴力计算完全一致；峰值 RSS 66.3 MiB；
+  重启 0.14 s；5,000 行事务回滚后无残留。
+
+以上为本地开发验证，正式成绩以平台对锁定版本的评测为准。
+
+## 5. 已知限制
+
+- 单机单进程单连接；不支持多客户端并发。
+- 不支持 `NULL`、`JOIN`、聚合、子查询、`ALTER TABLE`、外键、嵌套事务、
+  主键更新与 `OR` 条件。
+- WAL 只追加、不做压缩；大量删除后文件不会收缩。
+- 向量索引仅保存定义，`exact` 与 `ann` 都走精确扫描；数据规模很大时查询为
+  线性扫描。
+- 大事务在提交时整体编码为一条记录，事务极大时提交需要相应内存。
+- 镜像已在本地 Docker 中构建并跑通官方检查器与公开用例；尚未在组织方的正式
+  评测容器与资源限额下运行，正式成绩以平台对锁定版本的评测为准。

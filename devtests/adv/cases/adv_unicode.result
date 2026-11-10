@@ -1,0 +1,87 @@
+[
+  {},
+  {
+    "affected_rows": 1
+  },
+  {
+    "affected_rows": 1
+  },
+  {
+    "error": "value_too_long"
+  },
+  {
+    "error": "value_too_long"
+  },
+  {
+    "affected_rows": 2
+  },
+  {
+    "columns": [
+      "id",
+      "s"
+    ],
+    "rows": [
+      [
+        1,
+        "汉字测试"
+      ],
+      [
+        2,
+        "😀😀😀😀"
+      ],
+      [
+        5,
+        "Z"
+      ],
+      [
+        6,
+        "a"
+      ]
+    ]
+  },
+  {
+    "columns": [
+      "id"
+    ],
+    "rows": [
+      [
+        5
+      ],
+      [
+        6
+      ],
+      [
+        1
+      ],
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "columns": [
+      "id"
+    ],
+    "rows": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "columns": [
+      "id"
+    ],
+    "rows": [
+      [
+        1
+      ],
+      [
+        2
+      ],
+      [
+        6
+      ]
+    ]
+  }
+]
