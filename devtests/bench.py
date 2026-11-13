@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Local benchmark at the official small scale: 10k rows x 128 dims, 1000 TopK.
 
-Measures batch-write wall time, query latency, peak RSS and WAL size.
+Measures batch-write wall time, query latency, peak RSS, process I/O,
+WAL size and restart time.
 Development only; the platform measures end-to-end time itself.
 """
 import json
@@ -9,6 +10,7 @@ import math
 import os
 import random
 import shutil
+import statistics
 import struct
 import subprocess
 import sys
@@ -41,7 +43,6 @@ def main():
     shutil.rmtree(DATA, ignore_errors=True)
     os.makedirs(DATA)
     s = Session(DATA)
-    dims = ','.join(f'd{i}' for i in range(DIM))
     s.ok(f'CREATE TABLE docs (id BIGINT PRIMARY KEY, category VARCHAR(8), embedding VECTOR({DIM}));')
 
     t0 = time.perf_counter()
@@ -60,17 +61,24 @@ def main():
         category = 'g5' if i % 2 else None
         queries.append((qv, category))
 
+    latencies_ms = []
     t0 = time.perf_counter()
     for qv, category in queries:
         where = f" WHERE category = '{category}'" if category else ''
         sql = f"SELECT id, L2_DISTANCE(embedding, {fmt_vec(qv)}) AS d FROM docs{where} ORDER BY d LIMIT 10;"
+        query_start = time.perf_counter()
         res = s.ok(sql)
+        latencies_ms.append((time.perf_counter() - query_start) * 1000)
         out = res['rows']
         assert len(out) == 10, f'expected 10 rows, got {len(out)}'
         ids = [r[0] for r in out]
         assert len(set(ids)) == 10
         assert all(out[k][1] <= out[k + 1][1] + 1e-9 for k in range(9))
     query_s = time.perf_counter() - t0
+    with open(f'/proc/{s.proc.pid}/io') as f:
+        process_io = dict(line.split(':', 1) for line in f)
+    with open(f'/proc/{s.proc.pid}/status') as f:
+        hwm = next(line for line in f if line.startswith('VmHWM:'))
 
     # Cross-check a small sample of exact results against an independent scan.
     for qv, category in queries[:5]:
@@ -95,14 +103,14 @@ def main():
         ann = s.ok(sql, 'ann')['rows']
         assert ann == exact, 'ann differs from exact'
 
-    with open(f'/proc/{s.proc.pid}/status') as f:
-        status = f.read()
-    hwm = next(line for line in status.splitlines() if line.startswith('VmHWM'))
     wal = os.path.join(DATA, 'minivectordb.wal')
     print(f'rows={ROWS} dim={DIM} queries={QUERIES}')
     print(f'write: {write_s:.3f}s ({ROWS / write_s:.0f} rows/s), batched {BATCH}, autocommit')
     print(f'query: {query_s * 1000 / QUERIES:.2f} ms/query exact (K=10, half filtered)')
+    p95 = sorted(latencies_ms)[math.ceil(0.95 * len(latencies_ms)) - 1]
+    print(f'query latency: P50={statistics.median(latencies_ms):.3f} ms, P95={p95:.3f} ms (JSONL round trip)')
     print(f'peak RSS: {hwm.split()[1]} kB')
+    print(f'process I/O: read_bytes={int(process_io["read_bytes"])} write_bytes={int(process_io["write_bytes"])}')
     print(f'wal size: {os.path.getsize(wal) / 1048576:.2f} MiB')
 
     t0 = time.perf_counter()
