@@ -23,6 +23,11 @@
 #include <unordered_set>
 #include <vector>
 
+#if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__)) && !defined(MVD_DISABLE_AVX2)
+#include <immintrin.h>
+#define MVD_HAS_AVX2_KERNEL 1
+#endif
+
 namespace mvd {
 
 // ---------------------------------------------------------------------------
@@ -1112,6 +1117,24 @@ private:
         return std::sqrt(l2_squared(a, b));
     }
 
+#if defined(MVD_HAS_AVX2_KERNEL)
+    __attribute__((target("avx2,fma")))
+    static float l2_squared_avx2(const float* a, const float* b, size_t dim) {
+        __m256 sum0 = _mm256_setzero_ps();
+        __m256 sum1 = _mm256_setzero_ps();
+        for (size_t i = 0; i < dim; i += 16) {
+            __m256 d0 = _mm256_sub_ps(_mm256_loadu_ps(a + i), _mm256_loadu_ps(b + i));
+            __m256 d1 = _mm256_sub_ps(_mm256_loadu_ps(a + i + 8), _mm256_loadu_ps(b + i + 8));
+            sum0 = _mm256_fmadd_ps(d0, d0, sum0);
+            sum1 = _mm256_fmadd_ps(d1, d1, sum1);
+        }
+        const __m256 lanes = _mm256_add_ps(sum0, sum1);
+        __m128 sum = _mm_add_ps(_mm256_castps256_ps128(lanes), _mm256_extractf128_ps(lanes, 1));
+        sum = _mm_add_ps(sum, _mm_movehl_ps(sum, sum));
+        return _mm_cvtss_f32(_mm_add_ss(sum, _mm_shuffle_ps(sum, sum, 1)));
+    }
+#endif
+
     // -- INSERT ------------------------------------------------------------
 
     Result do_insert(const Stmt& st) {
@@ -1430,8 +1453,21 @@ private:
         heap.reserve(std::min<uint64_t>(k, std::min<size_t>(t.cache.size(), 64)));
         double cutoff = std::numeric_limits<double>::infinity();
 
+#if defined(MVD_HAS_AVX2_KERNEL)
+        const size_t dim = distance.q.size();
+        const bool use_avx2 = dim % 16 == 0 && dim <= 1024 &&
+                              __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma");
+        float avx2_cutoff = std::numeric_limits<float>::infinity();
+#endif
         auto consider = [&](int64_t pk, const Row& row) {
-            double squared = l2_squared(row[distance.col].v, distance.q);
+            const auto& vec = row[distance.col].v;
+#if defined(MVD_HAS_AVX2_KERNEL)
+            if (use_avx2) {
+                float estimate = l2_squared_avx2(vec.data(), distance.q.data(), dim);
+                if (estimate > avx2_cutoff && estimate <= FLT_MAX) return;
+            }
+#endif
+            double squared = l2_squared(vec, distance.q);
             if (squared > cutoff) return;
             DistanceCandidate candidate{pk, std::sqrt(squared)};
             if (heap.size() == k) {
@@ -1447,6 +1483,18 @@ private:
                 double next = std::nextafter(heap.front().distance,
                                              std::numeric_limits<double>::infinity());
                 cutoff = std::nextafter(next * next, std::numeric_limits<double>::infinity());
+#if defined(MVD_HAS_AVX2_KERNEL)
+                if (use_avx2) {
+                    // At most 64 FMAs per lane, plus subtraction, squaring and reduction.
+                    // With round-to-nearest, 2^-12 exceeds the relative error in both sums;
+                    // 2^-100 covers accumulated float underflow at up to 1024 dims.
+                    const double bound = (cutoff + 0x1p-100) / (1.0 - 0x1p-12);
+                    if (bound < FLT_MAX) {
+                        avx2_cutoff = std::nextafter(static_cast<float>(bound),
+                                                      std::numeric_limits<float>::infinity());
+                    }
+                }
+#endif
             }
         };
         const Table::FilterIndex* index =
