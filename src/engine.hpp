@@ -149,10 +149,18 @@ struct Loc {
 };
 
 struct Table {
+    using RowCache = std::unordered_map<int64_t, Row>;
+
+    struct FilterIndex {
+        int col;
+        std::vector<const RowCache::value_type*> entries;
+    };
+
     uint32_t id = 0;
     Schema schema;
     std::unordered_map<int64_t, Loc> locs;   // committed live rows
-    std::unordered_map<int64_t, Row> cache;  // rows materialized while small enough
+    RowCache cache;                         // rows materialized while small enough
+    std::optional<FilterIndex> filter_index; // sorted references into the committed row cache
     bool cached = true;
     uint64_t live_bytes = 0;
     std::vector<std::string> index_names;
@@ -633,6 +641,7 @@ private:
 
     void apply_change(Table& t, uint8_t op, int64_t pk, const Row* row,
                       uint64_t off, uint32_t len) {
+        t.filter_index.reset();
         if (op == 3) {
             auto it = t.locs.find(pk);
             if (it != t.locs.end()) {
@@ -1397,6 +1406,24 @@ private:
         }
     };
 
+    static const Table::FilterIndex* distance_filter_index(Table& t, int col) {
+        if (!t.filter_index) {
+            Table::FilterIndex index{col, {}};
+            try {
+                index.entries.reserve(t.cache.size());
+                for (const auto& entry : t.cache) index.entries.push_back(&entry);
+                std::sort(index.entries.begin(), index.entries.end(), [col](auto a, auto b) {
+                    return a->second[col].s < b->second[col].s;
+                });
+            } catch (const std::bad_alloc&) {
+                return nullptr;
+            }
+            t.filter_index.emplace(std::move(index));
+        }
+        // Keep at most one index per table and avoid rebuilding for other columns.
+        return t.filter_index->col == col ? &*t.filter_index : nullptr;
+    }
+
     void select_distance_topk(Table& t, const OutSpec& distance, const std::vector<Pred>& preds,
                               uint64_t k, Result& res) {
         std::vector<DistanceCandidate> heap;
@@ -1422,8 +1449,21 @@ private:
                 cutoff = std::nextafter(next * next, std::numeric_limits<double>::infinity());
             }
         };
-        for (const auto& entry : t.cache) {
-            if (eval_preds(entry.second, preds)) consider(entry.first, entry.second);
+        const Table::FilterIndex* index =
+            preds.empty() ? nullptr : distance_filter_index(t, preds[0].col);
+        if (index) {
+            const Pred& p = preds[0];
+            auto it = std::lower_bound(index->entries.begin(), index->entries.end(), p.s,
+                                       [&](auto entry, const std::string& value) {
+                                           return entry->second[p.col].s < value;
+                                       });
+            for (; it != index->entries.end() && (*it)->second[p.col].s == p.s; ++it) {
+                consider((*it)->first, (*it)->second);
+            }
+        } else {
+            for (const auto& entry : t.cache) {
+                if (eval_preds(entry.second, preds)) consider(entry.first, entry.second);
+            }
         }
 
         std::sort_heap(heap.begin(), heap.end());
