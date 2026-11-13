@@ -11,6 +11,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <iostream>
+#include <limits>
 #include <new>
 #include <optional>
 #include <queue>
@@ -1089,13 +1090,17 @@ private:
         }
     }
 
-    static double l2_distance(const std::vector<float>& a, const std::vector<float>& b) {
+    static double l2_squared(const std::vector<float>& a, const std::vector<float>& b) {
         double sum = 0.0;
         for (size_t i = 0; i < a.size(); ++i) {
             double d = static_cast<double>(a[i]) - static_cast<double>(b[i]);
             sum += d * d;
         }
-        return std::sqrt(sum);
+        return sum;
+    }
+
+    static double l2_distance(const std::vector<float>& a, const std::vector<float>& b) {
+        return std::sqrt(l2_squared(a, b));
     }
 
     // -- INSERT ------------------------------------------------------------
@@ -1383,6 +1388,54 @@ private:
         }
     };
 
+    struct DistanceCandidate {
+        int64_t pk;
+        double distance;
+
+        bool operator<(const DistanceCandidate& other) const {
+            return distance == other.distance ? pk < other.pk : distance < other.distance;
+        }
+    };
+
+    void select_distance_topk(Table& t, const OutSpec& distance, const std::vector<Pred>& preds,
+                              uint64_t k, Result& res) {
+        std::vector<DistanceCandidate> heap;
+        heap.reserve(std::min<uint64_t>(k, std::min<size_t>(t.cache.size(), 64)));
+        double cutoff = std::numeric_limits<double>::infinity();
+
+        auto consider = [&](int64_t pk, const Row& row) {
+            double squared = l2_squared(row[distance.col].v, distance.q);
+            if (squared > cutoff) return;
+            DistanceCandidate candidate{pk, std::sqrt(squared)};
+            if (heap.size() == k) {
+                if (!(candidate < heap.front())) return;
+                std::pop_heap(heap.begin(), heap.end());
+                heap.pop_back();
+            }
+            heap.push_back(candidate);
+            std::push_heap(heap.begin(), heap.end());
+            if (heap.size() == k) {
+                // Compare the legacy, rounded sqrt values before breaking ties by PK.
+                // Allow every squared distance that might round to the same sqrt.
+                double next = std::nextafter(heap.front().distance,
+                                             std::numeric_limits<double>::infinity());
+                cutoff = std::nextafter(next * next, std::numeric_limits<double>::infinity());
+            }
+        };
+        for (const auto& entry : t.cache) {
+            if (eval_preds(entry.second, preds)) consider(entry.first, entry.second);
+        }
+
+        std::sort_heap(heap.begin(), heap.end());
+        res.rows.reserve(heap.size());
+        for (const auto& candidate : heap) {
+            auto& out = res.rows.emplace_back(2);
+            out[0].i = candidate.pk;
+            out[1].kind = Cell::DBL;
+            out[1].d = candidate.distance;
+        }
+    }
+
     Result do_select(const Stmt& st) {
         Table* t = find_table(st.table);
         if (!t) return Result::fail("table_not_found", "no such table: " + st.table);
@@ -1494,6 +1547,18 @@ private:
         res.columns = columns;
 
         if (st.has_limit && st.limit == 0) return res;
+
+        if (t->cached && st.has_limit && (!txn_active_ || txn_.find(t->id) == txn_.end()) &&
+            st.items.size() == 2 && out_specs.size() == 2 && !out_specs[0].dist &&
+            out_specs[0].col == t->schema.pk && out_specs[1].dist &&
+            order_specs.size() == 1 && !order_specs[0].desc &&
+            (order_specs[0].sel == 1 ||
+             (order_specs[0].dist && order_specs[0].col == out_specs[1].col &&
+              order_specs[0].q == out_specs[1].q)) &&
+            (preds.empty() || (preds.size() == 1 && !preds[0].is_int && preds[0].op == 0))) {
+            select_distance_topk(*t, out_specs[1], preds, static_cast<uint64_t>(st.limit), res);
+            return res;
+        }
 
         const bool has_order = !order_specs.empty();
         const bool use_heap = has_order && st.has_limit;
